@@ -1,6 +1,6 @@
 {
   "name": "steam-deals",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Real-time Steam discount scanner",
   "main": "server.js",
