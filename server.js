@@ -206,6 +206,23 @@ async function enrichWithItad(items, apiKey) {
   }
 }
 
+function applyRecordTracking(items) {
+  const record = cache.loadJson('record-history.json', {});
+
+  for (const item of items) {
+    const prevCut = record[item.appid];
+    item.isNewAllTimeLow =
+      item.allTimeLowCut !== null &&
+      item.allTimeLowCut !== undefined &&
+      prevCut !== null &&
+      prevCut !== undefined &&
+      item.allTimeLowCut > prevCut;
+    record[item.appid] = item.allTimeLowCut;
+  }
+
+  cache.saveJson('record-history.json', record);
+}
+
 function applyHistory(items) {
   const history = cache.loadJson('history.json', {});
   const now = new Date().toISOString();
@@ -238,6 +255,7 @@ async function buildDealsResponse(count) {
   applyHistory(all);
   await enrichWithAppDetails(all);
   await enrichWithItad(all, config.itadApiKey);
+  applyRecordTracking(all);
 
   return { fetchedAt: new Date().toISOString(), itadEnabled: !!config.itadApiKey, items: all };
 }

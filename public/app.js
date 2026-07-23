@@ -141,16 +141,21 @@ function render() {
       ? `<span class="metacritic-chip ${metacriticClass(it.metacritic.score)}">MC ${it.metacritic.score}</span>`
       : '';
 
+    const hasAllTimeLow = it.allTimeLowCut !== null && it.allTimeLowCut !== undefined;
+
     const historyRight = itadEnabled
-      ? (it.allTimeLowCut !== null && it.allTimeLowCut !== undefined
-          ? `역대 최고 -${it.allTimeLowCut}%`
-          : '역대 기록 없음')
+      ? (hasAllTimeLow ? `역대 최고 -${it.allTimeLowCut}%` : '역대 기록 없음')
       : 'API 키 미설정';
+
+    const recordBadge = it.isNewAllTimeLow
+      ? `<span class="record-badge"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l2.09 4.26 4.7.68-3.4 3.31.8 4.68L8 11.77l-4.19 2.16.8-4.68L1.21 5.94l4.7-.68L8 1z"/></svg>역대 최저가 갱신</span>`
+      : '';
 
     a.innerHTML = `
       <div class="card-media">
         <img src="${it.image}" loading="lazy" alt="">
         <span class="tag ${tierClass(it.discount)}">-${it.discount}%</span>
+        ${recordBadge}
       </div>
       <div class="card-body">
         <div class="card-title">${escapeHtml(it.name)}</div>
