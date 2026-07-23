@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: steam-deals
+    runtime: node
+    plan: free
+    buildCommand: echo "no build step"
+    startCommand: node server.js
+    envVars:
+      - key: ITAD_API_KEY
+        sync: false
+      - key: SITE_ACCESS_CODE
+        sync: false
