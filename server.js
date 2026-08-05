@@ -53,7 +53,12 @@ function isRateLimited(ip) {
   return timestamps.length > RATE_LIMIT_MAX;
 }
 
-let inFlightDeals = null;
+const inFlightByMode = {};
+
+const MODE_CONFIG = {
+  deals: { queryParams: 'specials=1', requireDiscount: true, requireTagId: null },
+  horror: { queryParams: 'tags=1667', requireDiscount: false, requireTagId: 1667 }
+};
 
 async function mapWithConcurrency(items, limit, fn) {
   const results = new Array(items.length);
@@ -78,8 +83,8 @@ function decodeEntities(str) {
     .trim();
 }
 
-function fetchSteamHtml(count, start) {
-  const url = `https://store.steampowered.com/search/results/?query&start=${start}&count=${count}&specials=1&infinite=1&cc=kr&l=korean`;
+function fetchSteamHtml(count, start, queryParams) {
+  const url = `https://store.steampowered.com/search/results/?query&start=${start}&count=${count}&${queryParams}&infinite=1&cc=kr&l=korean`;
   return new Promise((resolve, reject) => {
     https.get(url, {
       headers: {
@@ -100,7 +105,7 @@ function fetchSteamHtml(count, start) {
   });
 }
 
-function parseResults(html) {
+function parseResults(html, { requireDiscount = true, requireTagId = null } = {}) {
   const blocks = html.split('<a href="https://store.steampowered.com/app/').slice(1);
   const items = [];
   for (const block of blocks) {
@@ -112,17 +117,37 @@ function parseResults(html) {
     const finalMatch = block.match(/<div class="discount_final_price">([^<]+)<\/div>/);
     const releasedMatch = block.match(/<div class="search_released responsive_secondrow">\s*([^<]*?)\s*<\/div>/);
     const reviewMatch = block.match(/<span class="search_review_summary ([^"]*)"[^>]*data-tooltip-html="([^"]*)"/);
+    const tagIdsMatch = block.match(/data-ds-tagids="(\[[^\]]*\])"/);
 
-    if (!appidMatch || !nameMatch || !discountMatch || !origMatch || !finalMatch) continue;
-    if (parseInt(discountMatch[1], 10) <= 0) continue;
+    if (!appidMatch || !nameMatch || !finalMatch) continue;
+
+    const discount = discountMatch ? parseInt(discountMatch[1], 10) : 0;
+    if (requireDiscount && (!origMatch || discount <= 0)) continue;
+
+    // Steam's tag-based search matches ANY of a game's tags, including ones
+    // buried far down its full tag list. Restricting to a game's own
+    // top-shown tags (the ones in this same search result) keeps a themed
+    // list (e.g. Horror) to games where that's actually a defining tag,
+    // not an incidental one.
+    if (requireTagId !== null) {
+      let tagIds = [];
+      try {
+        tagIds = tagIdsMatch ? JSON.parse(tagIdsMatch[1]) : [];
+      } catch (e) {
+        tagIds = [];
+      }
+      if (!tagIds.includes(requireTagId)) continue;
+    }
 
     items.push({
       appid: appidMatch[1],
       name: decodeEntities(nameMatch[1]),
       image: imgMatch ? imgMatch[1] : '',
-      discount: parseInt(discountMatch[1], 10),
-      originalPrice: origMatch ? decodeEntities(origMatch[1]) : '',
-      finalPrice: finalMatch ? decodeEntities(finalMatch[1]) : '',
+      discount,
+      // Steam omits the "original price" markup entirely when an item isn't
+      // discounted, since original and final price are the same.
+      originalPrice: origMatch ? decodeEntities(origMatch[1]) : decodeEntities(finalMatch[1]),
+      finalPrice: decodeEntities(finalMatch[1]),
       released: releasedMatch ? decodeEntities(releasedMatch[1]) : '',
       reviewClass: reviewMatch ? reviewMatch[1].trim() : '',
       reviewText: reviewMatch ? decodeEntities(reviewMatch[2].split('&lt;br&gt;')[0]) : '',
@@ -237,19 +262,28 @@ function applyHistory(items) {
   cache.saveJson('history.json', history);
 }
 
-async function buildDealsResponse(count) {
-  const pages = Math.ceil(count / 100);
+async function buildListResponse(count, mode) {
+  const { queryParams, requireDiscount, requireTagId } = MODE_CONFIG[mode];
+  // A quality filter (like requireTagId) can reject a large share of each raw
+  // page, so keep pulling further pages from Steam until we have enough
+  // qualifying items — up to a safety cap so a narrow filter can't spin
+  // forever if Steam's supply of matches runs out.
+  const MAX_RAW_PAGES = 10;
   let all = [];
-  for (let p = 0; p < pages; p++) {
+  let start = 0;
+  for (let page = 0; page < MAX_RAW_PAGES && all.length < count; page++) {
     let data;
     try {
-      data = await fetchSteamHtml(Math.min(100, count - p * 100), p * 100);
+      data = await fetchSteamHtml(100, start, queryParams);
     } catch (e) {
       await new Promise((r) => setTimeout(r, 800));
-      data = await fetchSteamHtml(Math.min(100, count - p * 100), p * 100);
+      data = await fetchSteamHtml(100, start, queryParams);
     }
-    all = all.concat(parseResults(data.results_html));
+    if (!data.results_html || !data.results_html.includes('search_result_row')) break;
+    all = all.concat(parseResults(data.results_html, { requireDiscount, requireTagId }));
+    start += 100;
   }
+  all = all.slice(0, count);
 
   const config = loadConfig();
   applyHistory(all);
@@ -264,7 +298,9 @@ const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, `http://localhost:${PORT}`);
   const ip = req.socket.remoteAddress || 'unknown';
 
-  if (reqUrl.pathname === '/api/deals') {
+  const mode = reqUrl.pathname === '/api/deals' ? 'deals' : reqUrl.pathname === '/api/horror' ? 'horror' : null;
+
+  if (mode) {
     const config = loadConfig();
     const code = req.headers['x-access-code'] || reqUrl.searchParams.get('code') || '';
     if (code !== config.siteAccessCode) {
@@ -280,12 +316,12 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const count = Math.min(parseInt(reqUrl.searchParams.get('count') || '150', 10), 300);
-      if (!inFlightDeals) {
-        inFlightDeals = buildDealsResponse(count).finally(() => {
-          inFlightDeals = null;
+      if (!inFlightByMode[mode]) {
+        inFlightByMode[mode] = buildListResponse(count, mode).finally(() => {
+          inFlightByMode[mode] = null;
         });
       }
-      const payload = await inFlightDeals;
+      const payload = await inFlightByMode[mode];
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(payload));
     } catch (e) {

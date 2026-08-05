@@ -105,6 +105,28 @@
     text-align: right;
   }
 
+  .mode-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 28px;
+  }
+  .mode-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--fog);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 14px;
+    cursor: pointer;
+  }
+  .mode-tab:hover { color: var(--paper); }
+  .mode-tab.active {
+    color: var(--paper);
+    border-bottom-color: var(--accent);
+  }
+
   .toolbar {
     position: sticky;
     top: 0;
@@ -602,25 +624,24 @@
       <circle cx="21.5" cy="10.5" r="2.6" fill="var(--accent)"/>
     </svg>
     <div class="titles">
-      <h1>STEAM DEALS</h1>
-      <p>실시간 할인 스캐너 · Steam 공식 검색 API 기반</p>
+      <h1 id="pageTitle">STEAM DEALS</h1>
+      <p id="pageSubtitle">실시간 할인 스캐너 · Steam 공식 검색 API 기반</p>
     </div>
   </div>
   <span id="fetchedAt"></span>
 </header>
 
+<div class="mode-tabs">
+  <button class="mode-tab active" id="tabDeals" data-mode="deals">할인 목록</button>
+  <button class="mode-tab" id="tabHorror" data-mode="horror">공포 게임</button>
+</div>
+
 <div class="toolbar">
   <div class="field">
     <span class="field-label">정렬</span>
-    <select id="sort">
-      <option value="discount_desc">할인율 높은순</option>
-      <option value="discount_asc">할인율 낮은순</option>
-      <option value="price_asc">가격 낮은순</option>
-      <option value="price_desc">가격 높은순</option>
-      <option value="name">이름순</option>
-    </select>
+    <select id="sort"></select>
   </div>
-  <div class="field">
+  <div class="field" id="minDiscountField">
     <span class="field-label">최소 할인율</span>
     <div class="field-row">
       <input type="range" id="minDiscount" min="0" max="90" step="5" value="0">
