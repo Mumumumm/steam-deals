@@ -285,6 +285,10 @@ async function buildListResponse(count, mode) {
   }
   all = all.slice(0, count);
 
+  if (all.length === 0) {
+    console.warn(`[${new Date().toISOString()}] WARNING: /${mode} returned 0 items — Steam markup may have changed, or the request may be blocked/rate-limited.`);
+  }
+
   const config = loadConfig();
   applyHistory(all);
   await enrichWithAppDetails(all);
