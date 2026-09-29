@@ -3,6 +3,17 @@ const https = require('https');
 const SINGLEPLAYER_CATEGORY_ID = 2;
 const MULTIPLAYER_CATEGORY_IDS = new Set([1, 9, 20, 27, 36, 37, 38, 39, 47, 48, 49]);
 
+// Steam has no player-count field, so instead of a numeric range we break
+// multiplayer down by the categories it actually publishes (IDs verified
+// against live appdetails responses for L4D2, Overcooked 2, PUBG, AoE2 DE):
+//   9  Co-op                 38 Online Co-op          39 Split Screen Co-op   48 LAN Co-op
+//   49 PvP                   36 Online PvP            37 Split Screen PvP     47 LAN PvP
+//   20 MMO   27 Cross-Platform Multiplayer   24 Shared/Split Screen (general)
+const COOP_CATEGORY_IDS = new Set([9, 38, 39, 48]);
+const PVP_CATEGORY_IDS = new Set([49, 36, 37, 47]);
+const ONLINE_CATEGORY_IDS = new Set([20, 27, 36, 38]);
+const LOCAL_CATEGORY_IDS = new Set([24, 37, 39]);
+
 function decodeEntities(str) {
   return (str || '')
     .replace(/&amp;/g, '&')
@@ -43,6 +54,10 @@ function fetchAppDetails(appid) {
               shortDescription: decodeEntities(data.short_description),
               multiplayer: isMultiplayer,
               singleplayer: isSingleplayer,
+              coop: categoryIds.some((id) => COOP_CATEGORY_IDS.has(id)),
+              pvp: categoryIds.some((id) => PVP_CATEGORY_IDS.has(id)),
+              onlineMulti: categoryIds.some((id) => ONLINE_CATEGORY_IDS.has(id)),
+              localMulti: categoryIds.some((id) => LOCAL_CATEGORY_IDS.has(id)),
               metacritic: data.metacritic ? { score: data.metacritic.score, url: data.metacritic.url } : null
             });
           } catch (e) {

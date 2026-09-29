@@ -218,6 +218,17 @@ function modeChipsHtml(it) {
   ].join('');
 }
 
+// Steam doesn't publish an exact player-count range, so the modal breaks
+// multiplayer down by the categories it does publish instead.
+function multiplayerDetailChipsHtml(it) {
+  return [
+    it.coop ? '<span class="mode-chip mode-chip-sub">협동</span>' : '',
+    it.pvp ? '<span class="mode-chip mode-chip-sub">대전</span>' : '',
+    it.onlineMulti ? '<span class="mode-chip mode-chip-sub">온라인</span>' : '',
+    it.localMulti ? '<span class="mode-chip mode-chip-sub">로컬/한 화면</span>' : ''
+  ].join('');
+}
+
 function metacriticChipHtml(it) {
   return it.metacritic
     ? `<span class="metacritic-chip ${metacriticClass(it.metacritic.score)}">MC ${it.metacritic.score}</span>`
@@ -252,7 +263,7 @@ function openModal(it) {
   modalTitleEl.textContent = it.name;
   modalGenresEl.innerHTML = (it.genres || []).map((g) => `<span class="genre-chip">${escapeHtml(g)}</span>`).join('');
   modalDescEl.textContent = it.shortDescription || '';
-  modalMetaEl.innerHTML = `${reviewChip(it)}${modeChipsHtml(it)}${metacriticChipHtml(it)}`;
+  modalMetaEl.innerHTML = `${reviewChip(it)}${modeChipsHtml(it)}${multiplayerDetailChipsHtml(it)}${metacriticChipHtml(it)}`;
   modalHistoryEl.innerHTML = `<span>${deltaBadge(it)}</span><span>${escapeHtml(historyRightText(it))}</span>`;
   modalPriceEl.innerHTML = priceRowHtml(it);
   modalSteamLinkEl.href = it.url;
@@ -289,6 +300,10 @@ function render() {
     if (genre && !(it.genres || []).includes(genre)) return false;
     if (playMode === 'single' && !(it.singleplayer && !it.multiplayer)) return false;
     if (playMode === 'multi' && !it.multiplayer) return false;
+    if (playMode === 'coop' && !it.coop) return false;
+    if (playMode === 'pvp' && !it.pvp) return false;
+    if (playMode === 'online' && !it.onlineMulti) return false;
+    if (playMode === 'local' && !it.localMulti) return false;
     if (hideNegative && /부정/.test(it.reviewText || '')) return false;
     return true;
   });

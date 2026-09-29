@@ -198,11 +198,18 @@ function applyAppDetailsFromCache(items) {
   const pending = [];
   for (const item of items) {
     const d = appdetailsCache[item.appid];
-    const fresh = d && now - d.cachedAt <= APPDETAILS_TTL_MS;
+    // d.coop is undefined for entries cached before the coop/pvp/online/local
+    // breakdown was added — treat those as stale too so they refetch instead
+    // of showing blank multiplayer-detail chips for up to 30 days.
+    const fresh = d && now - d.cachedAt <= APPDETAILS_TTL_MS && d.coop !== undefined;
     item.genres = (d && d.genres) || [];
     item.shortDescription = (d && d.shortDescription) || '';
     item.multiplayer = !!(d && d.multiplayer);
     item.singleplayer = !!(d && d.singleplayer);
+    item.coop = !!(d && d.coop);
+    item.pvp = !!(d && d.pvp);
+    item.onlineMulti = !!(d && d.onlineMulti);
+    item.localMulti = !!(d && d.localMulti);
     item.metacritic = (d && d.metacritic) || null;
     if (!fresh) pending.push(item);
   }
