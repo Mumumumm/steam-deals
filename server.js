@@ -61,10 +61,33 @@ function isRateLimited(ip) {
 
 const inFlightByMode = {};
 
-const MODE_CONFIG = {
-  deals: { queryParams: 'specials=1', requireDiscount: true, requireTagId: null },
-  horror: { queryParams: 'tags=1667', requireDiscount: false, requireTagId: 1667 }
-};
+// Steam ids verified against its own tag reference
+// (store.steampowered.com/tagdata/populartags/koreana) — never guessed.
+// Deliberately themes that AREN'T official Steam genres (those are already
+// covered by the client-side genre filter), so this adds real new coverage.
+const THEME_TAGS = [
+  { id: 1667, label: '공포' },
+  { id: 1716, label: '로그라이크' },
+  { id: 1695, label: '오픈 월드' },
+  { id: 1685, label: '협동' },
+  { id: 1628, label: '메트로배니아' },
+  { id: 29482, label: '소울라이크' },
+  { id: 3799, label: '비주얼 노벨' },
+  { id: 1659, label: '좀비' }
+];
+const THEME_TAG_IDS = new Set(THEME_TAGS.map((t) => t.id));
+
+function resolveListConfig(mode) {
+  if (mode === 'deals') {
+    return { queryParams: 'specials=1', requireDiscount: true, requireTagId: null };
+  }
+  if (mode.startsWith('theme:')) {
+    const tagId = parseInt(mode.slice('theme:'.length), 10);
+    if (!THEME_TAG_IDS.has(tagId)) return null;
+    return { queryParams: `tags=${tagId}`, requireDiscount: false, requireTagId: tagId };
+  }
+  return null;
+}
 
 async function mapWithConcurrency(items, limit, fn) {
   const results = new Array(items.length);
@@ -212,8 +235,19 @@ function applyItadFromCache(items) {
   for (const item of items) {
     const e = itadCache[item.appid];
     item.allTimeLowCut = e && e.storeLow ? e.storeLow.cut : null;
-    const fresh = e && e.itadId && now - (e.storeLowCachedAt || 0) <= ITAD_STORELOW_TTL_MS;
-    if (!fresh) pending.push(item);
+
+    if (!e) {
+      pending.push(item); // never looked up
+      continue;
+    }
+    if (!e.itadId) {
+      // Confirmed "not on ITAD" — nothing more to fetch for it, so this
+      // only needs an occasional recheck (ITAD's catalog does grow), not
+      // a retry on every single background cycle.
+      if (now - (e.lookupCachedAt || 0) > APPDETAILS_TTL_MS) pending.push(item);
+      continue;
+    }
+    if (now - (e.storeLowCachedAt || 0) > ITAD_STORELOW_TTL_MS) pending.push(item);
   }
   return pending;
 }
@@ -225,10 +259,12 @@ async function fetchMissingItad(pendingItems, apiKey) {
 
   await mapWithConcurrency(pendingItems, 3, async (item) => {
     const entry = itadCache[item.appid];
-    if (entry && entry.itadId) return;
+    // Already have a valid id, or a "not found" result that's still within
+    // its recheck window — skip re-querying ITAD for it.
+    if (entry && (entry.itadId || now - (entry.lookupCachedAt || 0) <= APPDETAILS_TTL_MS)) return;
     try {
       const itadId = await itad.lookupGameId(item.appid, apiKey);
-      itadCache[item.appid] = { itadId, storeLow: null, storeLowCachedAt: 0 };
+      itadCache[item.appid] = { itadId, storeLow: null, storeLowCachedAt: 0, lookupCachedAt: now };
     } catch (e) {
       // leave uncached on failure (network error / rate limit) so it retries next cycle
     }
@@ -291,7 +327,7 @@ function writeRecordTracking(items) {
 }
 
 async function fetchBaseList(count, mode) {
-  const { queryParams, requireDiscount, requireTagId } = MODE_CONFIG[mode];
+  const { queryParams, requireDiscount, requireTagId } = resolveListConfig(mode);
   // A quality filter (like requireTagId) can reject a large share of each raw
   // page, so keep pulling further pages from Steam until we have enough
   // qualifying items — up to a safety cap so a narrow filter can't spin
@@ -391,7 +427,19 @@ const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, `http://localhost:${PORT}`);
   const ip = req.socket.remoteAddress || 'unknown';
 
-  const mode = reqUrl.pathname === '/api/deals' ? 'deals' : reqUrl.pathname === '/api/horror' ? 'horror' : null;
+  if (reqUrl.pathname === '/api/themes') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ themes: THEME_TAGS }));
+    return;
+  }
+
+  let mode = null;
+  if (reqUrl.pathname === '/api/deals') {
+    mode = 'deals';
+  } else if (reqUrl.pathname === '/api/theme') {
+    const tagId = parseInt(reqUrl.searchParams.get('tag') || '', 10);
+    if (THEME_TAG_IDS.has(tagId)) mode = `theme:${tagId}`;
+  }
 
   if (mode) {
     const config = loadConfig();

@@ -152,6 +152,26 @@
     border-bottom-color: var(--accent);
   }
 
+  .theme-select {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--fog);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 10px 14px;
+    border-radius: 0;
+    cursor: pointer;
+  }
+  .theme-select:hover { color: var(--paper); }
+  .theme-select.active {
+    color: var(--paper);
+    border-bottom-color: var(--accent);
+  }
+
   .toolbar {
     position: sticky;
     top: 0;
@@ -659,7 +679,9 @@
 
 <div class="mode-tabs">
   <button class="mode-tab active" id="tabDeals" data-mode="deals">할인 목록</button>
-  <button class="mode-tab" id="tabHorror" data-mode="horror">공포 게임</button>
+  <select class="theme-select" id="themeSelect">
+    <option value="" selected>테마별 게임 ▾</option>
+  </select>
 </div>
 
 <div class="toolbar">

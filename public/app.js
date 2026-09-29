@@ -1,23 +1,27 @@
-const MODE_CONFIG = {
-  deals: {
-    endpoint: '/api/deals',
-    title: 'STEAM DEALS',
-    subtitle: '실시간 할인 스캐너 · Steam 공식 검색 API 기반',
-    showMinDiscount: true,
-    sortOptions: [
-      ['discount_desc', '할인율 높은순'],
-      ['discount_asc', '할인율 낮은순'],
-      ['price_asc', '가격 낮은순'],
-      ['price_desc', '가격 높은순'],
-      ['name', '이름순']
-    ],
-    defaultSort: 'discount_desc',
-    emptyMessage: '조건에 맞는 게임이 없습니다. 최소 할인율을 낮춰보세요.'
-  },
-  horror: {
-    endpoint: '/api/horror',
-    title: 'HORROR GAMES',
-    subtitle: '공포 게임 모음 · Steam 공식 검색 API 기반',
+const DEALS_CONFIG = {
+  endpoint: '/api/deals',
+  title: 'STEAM DEALS',
+  subtitle: '실시간 할인 스캐너 · Steam 공식 검색 API 기반',
+  showMinDiscount: true,
+  sortOptions: [
+    ['discount_desc', '할인율 높은순'],
+    ['discount_asc', '할인율 낮은순'],
+    ['price_asc', '가격 낮은순'],
+    ['price_desc', '가격 높은순'],
+    ['name', '이름순']
+  ],
+  defaultSort: 'discount_desc',
+  emptyMessage: '조건에 맞는 게임이 없습니다. 최소 할인율을 낮춰보세요.'
+};
+
+// Populated from /api/themes on load — [{ id, label }, ...]
+let THEMES = [];
+
+function themeConfig(tagId, label) {
+  return {
+    endpoint: `/api/theme?tag=${tagId}`,
+    title: `${label.toUpperCase()} GAMES`,
+    subtitle: `${label} 게임 모음 · Steam 공식 검색 API 기반`,
     showMinDiscount: false,
     sortOptions: [
       ['review_desc', '평점 좋은순'],
@@ -26,12 +30,22 @@ const MODE_CONFIG = {
       ['name', '이름순']
     ],
     defaultSort: 'review_desc',
-    emptyMessage: '조건에 맞는 공포 게임이 없습니다.'
+    emptyMessage: `조건에 맞는 ${label} 게임이 없습니다.`
+  };
+}
+
+function getModeConfig(mode) {
+  if (mode === 'deals') return DEALS_CONFIG;
+  if (mode.startsWith('theme:')) {
+    const tagId = parseInt(mode.slice('theme:'.length), 10);
+    const theme = THEMES.find((t) => t.id === tagId);
+    if (theme) return themeConfig(theme.id, theme.label);
   }
-};
+  return DEALS_CONFIG;
+}
 
 let currentMode = 'deals';
-const modeData = { deals: null, horror: null };
+const modeData = {};
 let allItems = [];
 let itadEnabled = false;
 
@@ -41,7 +55,12 @@ let itadEnabled = false;
 // server's own cache) and re-render as new fields arrive.
 const POLL_INTERVAL_MS = 4000;
 const POLL_MAX_ATTEMPTS = 45; // ~3 minutes worst case
-const pollState = { deals: { timer: null, attempts: 0 }, horror: { timer: null, attempts: 0 } };
+const pollState = {};
+
+function getPollState(mode) {
+  if (!pollState[mode]) pollState[mode] = { timer: null, attempts: 0 };
+  return pollState[mode];
+}
 
 const grid = document.getElementById('grid');
 const statusEl = document.getElementById('status');
@@ -50,7 +69,7 @@ const fetchedAtEl = document.getElementById('fetchedAt');
 const pageTitleEl = document.getElementById('pageTitle');
 const pageSubtitleEl = document.getElementById('pageSubtitle');
 const tabDealsEl = document.getElementById('tabDeals');
-const tabHorrorEl = document.getElementById('tabHorror');
+const themeSelectEl = document.getElementById('themeSelect');
 const sortEl = document.getElementById('sort');
 const minDiscountFieldEl = document.getElementById('minDiscountField');
 const minDiscountEl = document.getElementById('minDiscount');
@@ -148,7 +167,7 @@ function populateGenreOptions() {
 }
 
 function populateSortOptions(mode) {
-  const config = MODE_CONFIG[mode];
+  const config = getModeConfig(mode);
   sortEl.innerHTML = config.sortOptions.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
   sortEl.value = config.defaultSort;
 }
@@ -257,7 +276,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 function render() {
-  const config = MODE_CONFIG[currentMode];
+  const config = getModeConfig(currentMode);
   const minDiscount = config.showMinDiscount ? parseInt(minDiscountEl.value, 10) : 0;
   const sortMode = sortEl.value;
   const genre = genreEl.value;
@@ -353,11 +372,11 @@ function escapeHtml(str) {
 }
 
 function applyModeChrome(mode) {
-  const config = MODE_CONFIG[mode];
+  const config = getModeConfig(mode);
   pageTitleEl.textContent = config.title;
   pageSubtitleEl.textContent = config.subtitle;
   tabDealsEl.classList.toggle('active', mode === 'deals');
-  tabHorrorEl.classList.toggle('active', mode === 'horror');
+  themeSelectEl.classList.toggle('active', mode.startsWith('theme:'));
   minDiscountFieldEl.style.display = config.showMinDiscount ? '' : 'none';
   minDiscountEl.value = 0;
   minDiscountValEl.textContent = '0%';
@@ -385,7 +404,7 @@ async function loadMode(mode, { force = false, silent = false } = {}) {
     }
   }
   try {
-    const res = await fetch(`${MODE_CONFIG[mode].endpoint}?count=150`, {
+    const res = await fetch(`${getModeConfig(mode).endpoint}?count=150`, {
       headers: { 'X-Access-Code': accessCode }
     });
 
@@ -438,7 +457,7 @@ function appendEnrichmentStatus(data) {
 }
 
 function maybeSchedulePoll(mode, data) {
-  const state = pollState[mode];
+  const state = getPollState(mode);
   clearTimeout(state.timer);
   state.timer = null;
 
@@ -477,8 +496,30 @@ accessCodeInputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitAccessCode();
 });
 
-tabDealsEl.addEventListener('click', () => switchMode('deals'));
-tabHorrorEl.addEventListener('click', () => switchMode('horror'));
+tabDealsEl.addEventListener('click', () => {
+  themeSelectEl.value = '';
+  switchMode('deals');
+});
+themeSelectEl.addEventListener('change', () => {
+  const tagId = themeSelectEl.value;
+  if (!tagId) return;
+  switchMode(`theme:${tagId}`);
+});
+
+async function loadThemes() {
+  try {
+    const res = await fetch('/api/themes');
+    const data = await res.json();
+    THEMES = data.themes || [];
+    const current = themeSelectEl.value;
+    themeSelectEl.innerHTML =
+      '<option value="">테마별 게임 ▾</option>' +
+      THEMES.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join('');
+    themeSelectEl.value = THEMES.some((t) => String(t.id) === current) ? current : '';
+  } catch (e) {
+    // Theme dropdown stays as the placeholder-only option; deals tab still works.
+  }
+}
 
 sortEl.addEventListener('change', render);
 genreEl.addEventListener('change', render);
@@ -492,3 +533,4 @@ refreshBtn.addEventListener('click', () => loadMode(currentMode, { force: true }
 
 applyModeChrome(currentMode);
 loadMode(currentMode);
+loadThemes();
