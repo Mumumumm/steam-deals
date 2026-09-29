@@ -70,6 +70,7 @@ const pageTitleEl = document.getElementById('pageTitle');
 const pageSubtitleEl = document.getElementById('pageSubtitle');
 const tabDealsEl = document.getElementById('tabDeals');
 const themeSelectEl = document.getElementById('themeSelect');
+const themeSelectWrapEl = document.getElementById('themeSelectWrap');
 const sortEl = document.getElementById('sort');
 const minDiscountFieldEl = document.getElementById('minDiscountField');
 const minDiscountEl = document.getElementById('minDiscount');
@@ -376,7 +377,7 @@ function applyModeChrome(mode) {
   pageTitleEl.textContent = config.title;
   pageSubtitleEl.textContent = config.subtitle;
   tabDealsEl.classList.toggle('active', mode === 'deals');
-  themeSelectEl.classList.toggle('active', mode.startsWith('theme:'));
+  themeSelectWrapEl.classList.toggle('active', mode.startsWith('theme:'));
   minDiscountFieldEl.style.display = config.showMinDiscount ? '' : 'none';
   minDiscountEl.value = 0;
   minDiscountValEl.textContent = '0%';
@@ -513,7 +514,7 @@ async function loadThemes() {
     THEMES = data.themes || [];
     const current = themeSelectEl.value;
     themeSelectEl.innerHTML =
-      '<option value="">테마별 게임 ▾</option>' +
+      '<option value="">테마별 게임</option>' +
       THEMES.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join('');
     themeSelectEl.value = THEMES.some((t) => String(t.id) === current) ? current : '';
   } catch (e) {

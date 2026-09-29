@@ -152,24 +152,47 @@
     border-bottom-color: var(--accent);
   }
 
-  .theme-select {
-    background: none;
-    border: none;
+  .theme-select-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
     border-bottom: 2px solid transparent;
     color: var(--fog);
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .theme-select-wrap:hover { color: var(--paper); }
+  .theme-select-wrap.active {
+    color: var(--paper);
+    border-bottom-color: var(--accent);
+  }
+  .theme-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background: none;
+    border: none;
+    color: inherit;
     font-family: var(--font-body);
     font-size: 13px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    padding: 10px 14px;
+    padding: 10px 24px 10px 14px;
     border-radius: 0;
     cursor: pointer;
   }
-  .theme-select:hover { color: var(--paper); }
-  .theme-select.active {
-    color: var(--paper);
-    border-bottom-color: var(--accent);
+  .theme-select-wrap::after {
+    content: '';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    width: 8px;
+    height: 8px;
+    pointer-events: none;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23000' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23000' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+    transform: translateY(-50%);
   }
 
   .toolbar {
@@ -679,9 +702,11 @@
 
 <div class="mode-tabs">
   <button class="mode-tab active" id="tabDeals" data-mode="deals">할인 목록</button>
-  <select class="theme-select" id="themeSelect">
-    <option value="" selected>테마별 게임 ▾</option>
-  </select>
+  <div class="theme-select-wrap" id="themeSelectWrap">
+    <select class="theme-select" id="themeSelect">
+      <option value="" selected>테마별 게임</option>
+    </select>
+  </div>
 </div>
 
 <div class="toolbar">
