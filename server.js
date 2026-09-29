@@ -316,6 +316,11 @@ function writeHistory(items) {
   const history = cache.loadJson('history.json', {});
   const now = new Date().toISOString();
   for (const item of items) {
+    // Genre/theme browsing (unlike the deals list) includes games that
+    // aren't currently on sale. Recording a 0% snapshot for one would give
+    // a real future sale a bogus "last discount" to compare against, so
+    // only genuine sale observations count as history here.
+    if (item.discount <= 0) continue;
     history[item.appid] = { discount: item.discount, finalPrice: item.finalPrice, fetchedAt: now };
   }
   cache.saveJson('history.json', history);

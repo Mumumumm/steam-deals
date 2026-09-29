@@ -343,6 +343,13 @@ async function loadDeals({ force = false, silent = false } = {}) {
     return;
   }
 
+  // Snapshot which genre/theme this request is for. If the user switches
+  // again (or a background poll for the old selection is still in flight)
+  // before this resolves, currentTag will have moved on by the time we get
+  // a response — discard it instead of overwriting the grid with the wrong
+  // genre's games.
+  const requestedTag = currentTag;
+
   if (!silent) {
     refreshBtn.disabled = true;
     refreshBtn.classList.add('spinning');
@@ -352,7 +359,7 @@ async function loadDeals({ force = false, silent = false } = {}) {
     }
   }
   try {
-    const url = currentTag ? `/api/deals?count=150&tag=${currentTag}` : '/api/deals?count=150';
+    const url = requestedTag ? `/api/deals?count=150&tag=${requestedTag}` : '/api/deals?count=150';
     const res = await fetch(url, {
       headers: { 'X-Access-Code': accessCode }
     });
@@ -369,6 +376,7 @@ async function loadDeals({ force = false, silent = false } = {}) {
 
     const data = await res.json();
     if (data.error) throw new Error(data.error);
+    if (requestedTag !== currentTag) return;
     hideAccessGate();
     loadedData = data;
     applyLoadedData();
