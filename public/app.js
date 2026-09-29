@@ -3,6 +3,7 @@ const EMPTY_MESSAGE = '조건에 맞는 게임이 없습니다. 최소 할인율
 let allItems = [];
 let itadEnabled = false;
 let loadedData = null;
+let currentTag = ''; // '' = current deals; else a genre/theme tag id
 
 // The server returns the base list immediately and fills in genres/reviews/
 // history in the background. While the data isn't fully enriched yet, we
@@ -102,21 +103,19 @@ function renderSkeleton(count) {
     .join('');
 }
 
-// The genre/theme filter combines Steam's official genres (from appdetails)
-// with the curated theme tags (Horror, Roguelike, etc. — these aren't
-// official genres, so they'd never show up there otherwise) into one list,
-// since to a player picking "what kind of game" they're the same kind of
-// choice.
-function populateGenreOptions() {
-  const genres = new Set();
-  for (const it of allItems) {
-    for (const g of it.genres || []) genres.add(g);
-    for (const t of it.tags || []) genres.add(t);
+// The genre/theme list is fixed (server-defined), not derived from whatever
+// happens to be in the currently-loaded list — picking one triggers a fresh
+// server query scoped to that genre/theme (see loadDeals), covering Steam's
+// full catalog for it rather than just whatever's currently on sale.
+async function loadGenres() {
+  try {
+    const res = await fetch('/api/genres');
+    const data = await res.json();
+    const sorted = (data.genres || []).slice().sort((a, b) => a.label.localeCompare(b.label, 'ko'));
+    genreEl.innerHTML = '<option value="">전체 (할인 목록)</option>' + sorted.map((g) => `<option value="${g.id}">${escapeHtml(g.label)}</option>`).join('');
+  } catch (e) {
+    // Genre dropdown stays as the placeholder-only option; deals list still works.
   }
-  const sorted = Array.from(genres).sort((a, b) => a.localeCompare(b, 'ko'));
-  const current = genreEl.value;
-  genreEl.innerHTML = '<option value="">전체</option>' + sorted.map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
-  genreEl.value = sorted.includes(current) ? current : '';
 }
 
 function deltaBadge(it) {
@@ -237,13 +236,11 @@ document.addEventListener('keydown', (e) => {
 function render() {
   const minDiscount = parseInt(minDiscountEl.value, 10);
   const sortMode = sortEl.value;
-  const genre = genreEl.value;
   const playMode = playModeEl.value;
   const hideNegative = hideNegativeEl.checked;
 
   let items = allItems.filter((it) => {
     if (it.discount < minDiscount) return false;
-    if (genre && !(it.genres || []).includes(genre) && !(it.tags || []).includes(genre)) return false;
     if (playMode === 'single' && !(it.singleplayer && !it.multiplayer)) return false;
     if (playMode === 'multi' && !it.multiplayer) return false;
     if (playMode === 'coop' && !it.coop) return false;
@@ -355,7 +352,8 @@ async function loadDeals({ force = false, silent = false } = {}) {
     }
   }
   try {
-    const res = await fetch('/api/deals?count=150', {
+    const url = currentTag ? `/api/deals?count=150&tag=${currentTag}` : '/api/deals?count=150';
+    const res = await fetch(url, {
       headers: { 'X-Access-Code': accessCode }
     });
 
@@ -388,7 +386,6 @@ function applyLoadedData() {
   allItems = loadedData.items;
   itadEnabled = loadedData.itadEnabled;
   fetchedAtEl.textContent = '마지막 갱신 ' + new Date(loadedData.fetchedAt).toLocaleString('ko-KR');
-  populateGenreOptions();
   render();
   appendEnrichmentStatus(loadedData);
   maybeSchedulePoll(loadedData);
@@ -428,7 +425,6 @@ accessCodeInputEl.addEventListener('keydown', (e) => {
 });
 
 sortEl.addEventListener('change', render);
-genreEl.addEventListener('change', render);
 playModeEl.addEventListener('change', render);
 hideNegativeEl.addEventListener('change', render);
 minDiscountEl.addEventListener('input', () => {
@@ -437,4 +433,13 @@ minDiscountEl.addEventListener('input', () => {
 });
 refreshBtn.addEventListener('click', () => loadDeals({ force: true }));
 
+genreEl.addEventListener('change', () => {
+  currentTag = genreEl.value;
+  loadedData = null;
+  clearTimeout(pollState.timer);
+  pollState.attempts = 0;
+  loadDeals({ force: true });
+});
+
 loadDeals();
+loadGenres();

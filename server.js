@@ -59,15 +59,25 @@ function isRateLimited(ip) {
   return timestamps.length > RATE_LIMIT_MAX;
 }
 
-let inFlightRequest = null;
-
-// Steam ids verified against its own tag reference
-// (store.steampowered.com/tagdata/populartags/koreana) — never guessed.
-// Deliberately tags that ISN'T an official Steam genre (those come from
-// appdetails' own genre list on each item) — every deal gets labeled with
-// whichever of these it carries, and the frontend filter treats genres and
-// these tags as one combined list instead of two separate pickers.
-const THEME_TAGS = [
+// Steam community tag ids, verified against its own tag reference
+// (store.steampowered.com/tagdata/populartags/koreana and /english) and by
+// live search queries — never guessed. The first 12 are the same categories
+// appdetails calls "genres"; the rest are tags with no official-genre
+// equivalent (Horror, Roguelike, ...). Both use the same tags= search param
+// on Steam's end, so one dropdown and one query path covers all of them.
+const GENRE_TAGS = [
+  { id: 19, label: '액션' },
+  { id: 21, label: '어드벤처' },
+  { id: 122, label: 'RPG' },
+  { id: 9, label: '전략' },
+  { id: 597, label: '캐주얼' },
+  { id: 599, label: '시뮬레이션' },
+  { id: 701, label: '스포츠' },
+  { id: 699, label: '레이싱' },
+  { id: 492, label: '인디' },
+  { id: 113, label: '무료 플레이' },
+  { id: 493, label: '앞서 해보기' },
+  { id: 128, label: '대규모 멀티플레이어' },
   { id: 1667, label: '공포' },
   { id: 1716, label: '로그라이크' },
   { id: 1695, label: '오픈 월드' },
@@ -77,7 +87,13 @@ const THEME_TAGS = [
   { id: 3799, label: '비주얼 노벨' },
   { id: 1659, label: '좀비' }
 ];
-const THEME_TAG_LABEL_BY_ID = new Map(THEME_TAGS.map((t) => [t.id, t.label]));
+const GENRE_TAG_IDS = new Set(GENRE_TAGS.map((t) => t.id));
+
+function keyFor(tagId) {
+  return tagId ? String(tagId) : 'deals';
+}
+
+const inFlightByKey = {};
 
 async function mapWithConcurrency(items, limit, fn) {
   const results = new Array(items.length);
@@ -124,7 +140,7 @@ function fetchSteamHtml(count, start, queryParams) {
   });
 }
 
-function parseResults(html, { requireDiscount = true } = {}) {
+function parseResults(html, { requireDiscount = true, requireTagId = null } = {}) {
   const blocks = html.split('<a href="https://store.steampowered.com/app/').slice(1);
   const items = [];
   for (const block of blocks) {
@@ -143,19 +159,20 @@ function parseResults(html, { requireDiscount = true } = {}) {
     const discount = discountMatch ? parseInt(discountMatch[1], 10) : 0;
     if (requireDiscount && (!origMatch || discount <= 0)) continue;
 
-    // A game's full tag list can bury an incidental tag deep down (e.g.
-    // Cyberpunk somewhere having "Horror" at position #15), so only its own
-    // top-shown tags count toward these labels.
-    let tagIds = [];
-    try {
-      tagIds = tagIdsMatch ? JSON.parse(tagIdsMatch[1]) : [];
-    } catch (e) {
-      tagIds = [];
+    // Steam's tags= search matches ANY of a game's tags, including ones
+    // buried far down its full tag list (verified live: a tags=19 "액션"
+    // query surfaced PUBG, whose own top-7 shown tags don't even include
+    // 19). Restricting to a game's own top-shown tags keeps a filtered list
+    // to games where that's actually a defining trait, not an incidental one.
+    if (requireTagId !== null) {
+      let tagIds = [];
+      try {
+        tagIds = tagIdsMatch ? JSON.parse(tagIdsMatch[1]) : [];
+      } catch (e) {
+        tagIds = [];
+      }
+      if (!tagIds.slice(0, 7).includes(requireTagId)) continue;
     }
-    const tags = tagIds
-      .slice(0, 7)
-      .filter((id) => THEME_TAG_LABEL_BY_ID.has(id))
-      .map((id) => THEME_TAG_LABEL_BY_ID.get(id));
 
     items.push({
       appid: appidMatch[1],
@@ -169,7 +186,6 @@ function parseResults(html, { requireDiscount = true } = {}) {
       released: releasedMatch ? decodeEntities(releasedMatch[1]) : '',
       reviewClass: reviewMatch ? reviewMatch[1].trim() : '',
       reviewText: reviewMatch ? decodeEntities(reviewMatch[2].split('&lt;br&gt;')[0]) : '',
-      tags,
       url: `https://store.steampowered.com/app/${appidMatch[1]}/`
     });
   }
@@ -324,58 +340,66 @@ function writeRecordTracking(items) {
   cache.saveJson('record-history.json', record);
 }
 
-async function fetchBaseList(count) {
+// No tag (the default homepage view) means "current deals": on-sale items
+// only. A tag means "browse this genre/theme": Steam's full catalog for that
+// tag, sale or not — a discount is then just one more fact shown per game,
+// not a requirement to appear at all.
+async function fetchBaseList(count, tagId) {
+  const queryParams = tagId ? `tags=${tagId}` : 'specials=1';
+  const requireDiscount = !tagId;
   const MAX_RAW_PAGES = 10;
   let all = [];
   let start = 0;
   for (let page = 0; page < MAX_RAW_PAGES && all.length < count; page++) {
     let data;
     try {
-      data = await fetchSteamHtml(100, start, 'specials=1');
+      data = await fetchSteamHtml(100, start, queryParams);
     } catch (e) {
       await new Promise((r) => setTimeout(r, 800));
-      data = await fetchSteamHtml(100, start, 'specials=1');
+      data = await fetchSteamHtml(100, start, queryParams);
     }
     if (!data.results_html || !data.results_html.includes('search_result_row')) break;
-    all = all.concat(parseResults(data.results_html, { requireDiscount: true }));
+    all = all.concat(parseResults(data.results_html, { requireDiscount, requireTagId: tagId }));
     start += 100;
   }
   all = all.slice(0, count);
 
   if (all.length === 0) {
-    console.warn(`[${new Date().toISOString()}] WARNING: /api/deals returned 0 items — Steam markup may have changed, or the request may be blocked/rate-limited.`);
+    console.warn(`[${new Date().toISOString()}] WARNING: /api/deals (tag=${tagId || 'none'}) returned 0 items — Steam markup may have changed, or the request may be blocked/rate-limited.`);
   }
   return all;
 }
 
 // Reusing the same live scrape across requests within this window is what
 // makes rapid enrichment polling cheap — a poll doesn't need to hit Steam
-// again, just re-read our own on-disk caches.
-const baseListCache = { items: null, fetchedAt: 0 };
+// again, just re-read our own on-disk caches. Keyed per tag since each is a
+// genuinely different Steam query, not just a client-side view of one list.
+const baseListCache = {};
 
-async function getBaseList(count) {
-  if (baseListCache.items && Date.now() - baseListCache.fetchedAt < BASE_LIST_FRESH_MS && baseListCache.items.length >= count) {
-    return baseListCache.items.slice(0, count).map((i) => ({ ...i }));
+async function getBaseList(count, tagId) {
+  const key = keyFor(tagId);
+  const cached = baseListCache[key];
+  if (cached && Date.now() - cached.fetchedAt < BASE_LIST_FRESH_MS && cached.items.length >= count) {
+    return cached.items.slice(0, count).map((i) => ({ ...i }));
   }
-  if (!inFlightRequest) {
-    inFlightRequest = fetchBaseList(count).finally(() => {
-      inFlightRequest = null;
+  if (!inFlightByKey[key]) {
+    inFlightByKey[key] = fetchBaseList(count, tagId).finally(() => {
+      inFlightByKey[key] = null;
     });
   }
-  const items = await inFlightRequest;
-  baseListCache.items = items;
-  baseListCache.fetchedAt = Date.now();
+  const items = await inFlightByKey[key];
+  baseListCache[key] = { items, fetchedAt: Date.now() };
   return items.map((i) => ({ ...i }));
 }
 
-let backgroundJob = null;
+const backgroundJobByKey = {};
 
 // Fire-and-forget: fetches whatever appdetails/ITAD data was missing, then
 // persists history/record-tracking once that's done. Never awaited by the
 // request handler — the next poll just re-reads the caches this updates.
-function runBackgroundEnrichment(items, pendingDetails, pendingItad, apiKey) {
-  if (backgroundJob) return;
-  backgroundJob = Promise.resolve()
+function runBackgroundEnrichment(key, items, pendingDetails, pendingItad, apiKey) {
+  if (backgroundJobByKey[key]) return;
+  backgroundJobByKey[key] = Promise.resolve()
     .then(async () => {
       await fetchMissingAppDetails(pendingDetails);
       await fetchMissingItad(pendingItad, apiKey);
@@ -388,13 +412,13 @@ function runBackgroundEnrichment(items, pendingDetails, pendingItad, apiKey) {
       console.warn(`[${new Date().toISOString()}] Background enrichment failed: ${e.message}`);
     })
     .finally(() => {
-      backgroundJob = null;
+      backgroundJobByKey[key] = null;
     });
 }
 
-async function buildResponse(count) {
+async function buildResponse(count, tagId) {
   const config = loadConfig();
-  const items = await getBaseList(count);
+  const items = await getBaseList(count, tagId);
 
   applyHistoryFromCache(items);
   const pendingDetails = applyAppDetailsFromCache(items);
@@ -404,7 +428,7 @@ async function buildResponse(count) {
   const pendingAppids = new Set([...pendingDetails, ...pendingItad].map((i) => i.appid));
   const enriched = pendingAppids.size === 0;
   if (!enriched) {
-    runBackgroundEnrichment(items, pendingDetails, pendingItad, config.itadApiKey);
+    runBackgroundEnrichment(keyFor(tagId), items, pendingDetails, pendingItad, config.itadApiKey);
   }
 
   return {
@@ -420,6 +444,12 @@ const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, `http://localhost:${PORT}`);
   const ip = req.socket.remoteAddress || 'unknown';
 
+  if (reqUrl.pathname === '/api/genres') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ genres: GENRE_TAGS }));
+    return;
+  }
+
   if (reqUrl.pathname === '/api/deals') {
     const config = loadConfig();
     const code = req.headers['x-access-code'] || reqUrl.searchParams.get('code') || '';
@@ -434,9 +464,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const rawTag = reqUrl.searchParams.get('tag');
+    let tagId = null;
+    if (rawTag) {
+      const parsed = parseInt(rawTag, 10);
+      if (!GENRE_TAG_IDS.has(parsed)) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: '알 수 없는 장르/테마입니다' }));
+        return;
+      }
+      tagId = parsed;
+    }
+
     try {
       const count = Math.min(parseInt(reqUrl.searchParams.get('count') || '150', 10), 300);
-      const payload = await buildResponse(count);
+      const payload = await buildResponse(count, tagId);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(payload));
     } catch (e) {
