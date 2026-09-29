@@ -1,78 +1,22 @@
-const DEALS_CONFIG = {
-  endpoint: '/api/deals',
-  title: 'STEAM DEALS',
-  subtitle: '실시간 할인 스캐너 · Steam 공식 검색 API 기반',
-  showMinDiscount: true,
-  sortOptions: [
-    ['discount_desc', '할인율 높은순'],
-    ['discount_asc', '할인율 낮은순'],
-    ['price_asc', '가격 낮은순'],
-    ['price_desc', '가격 높은순'],
-    ['name', '이름순']
-  ],
-  defaultSort: 'discount_desc',
-  emptyMessage: '조건에 맞는 게임이 없습니다. 최소 할인율을 낮춰보세요.'
-};
+const EMPTY_MESSAGE = '조건에 맞는 게임이 없습니다. 최소 할인율을 낮춰보세요.';
 
-// Populated from /api/themes on load — [{ id, label }, ...]
-let THEMES = [];
-
-function themeConfig(tagId, label) {
-  return {
-    endpoint: `/api/theme?tag=${tagId}`,
-    title: `${label.toUpperCase()} GAMES`,
-    subtitle: `${label} 게임 모음 · Steam 공식 검색 API 기반`,
-    showMinDiscount: false,
-    sortOptions: [
-      ['review_desc', '평점 좋은순'],
-      ['price_asc', '가격 낮은순'],
-      ['price_desc', '가격 높은순'],
-      ['name', '이름순']
-    ],
-    defaultSort: 'review_desc',
-    emptyMessage: `조건에 맞는 ${label} 게임이 없습니다.`
-  };
-}
-
-function getModeConfig(mode) {
-  if (mode === 'deals') return DEALS_CONFIG;
-  if (mode.startsWith('theme:')) {
-    const tagId = parseInt(mode.slice('theme:'.length), 10);
-    const theme = THEMES.find((t) => t.id === tagId);
-    if (theme) return themeConfig(theme.id, theme.label);
-  }
-  return DEALS_CONFIG;
-}
-
-let currentMode = 'deals';
-const modeData = {};
 let allItems = [];
 let itadEnabled = false;
+let loadedData = null;
 
 // The server returns the base list immediately and fills in genres/reviews/
-// history in the background. While a mode's data isn't fully enriched yet,
-// we poll the same endpoint every few seconds (cheap — it just re-reads the
+// history in the background. While the data isn't fully enriched yet, we
+// poll the same endpoint every few seconds (cheap — it just re-reads the
 // server's own cache) and re-render as new fields arrive.
 const POLL_INTERVAL_MS = 4000;
 const POLL_MAX_ATTEMPTS = 45; // ~3 minutes worst case
-const pollState = {};
-
-function getPollState(mode) {
-  if (!pollState[mode]) pollState[mode] = { timer: null, attempts: 0 };
-  return pollState[mode];
-}
+const pollState = { timer: null, attempts: 0 };
 
 const grid = document.getElementById('grid');
 const statusEl = document.getElementById('status');
 const emptyEl = document.getElementById('empty');
 const fetchedAtEl = document.getElementById('fetchedAt');
-const pageTitleEl = document.getElementById('pageTitle');
-const pageSubtitleEl = document.getElementById('pageSubtitle');
-const tabDealsEl = document.getElementById('tabDeals');
-const themeSelectEl = document.getElementById('themeSelect');
-const themeSelectWrapEl = document.getElementById('themeSelectWrap');
 const sortEl = document.getElementById('sort');
-const minDiscountFieldEl = document.getElementById('minDiscountField');
 const minDiscountEl = document.getElementById('minDiscount');
 const minDiscountValEl = document.getElementById('minDiscountVal');
 const genreEl = document.getElementById('genre');
@@ -158,19 +102,21 @@ function renderSkeleton(count) {
     .join('');
 }
 
+// The genre/theme filter combines Steam's official genres (from appdetails)
+// with the curated theme tags (Horror, Roguelike, etc. — these aren't
+// official genres, so they'd never show up there otherwise) into one list,
+// since to a player picking "what kind of game" they're the same kind of
+// choice.
 function populateGenreOptions() {
   const genres = new Set();
-  for (const it of allItems) for (const g of it.genres || []) genres.add(g);
+  for (const it of allItems) {
+    for (const g of it.genres || []) genres.add(g);
+    for (const t of it.tags || []) genres.add(t);
+  }
   const sorted = Array.from(genres).sort((a, b) => a.localeCompare(b, 'ko'));
   const current = genreEl.value;
   genreEl.innerHTML = '<option value="">전체</option>' + sorted.map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
   genreEl.value = sorted.includes(current) ? current : '';
-}
-
-function populateSortOptions(mode) {
-  const config = getModeConfig(mode);
-  sortEl.innerHTML = config.sortOptions.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
-  sortEl.value = config.defaultSort;
 }
 
 function deltaBadge(it) {
@@ -225,7 +171,8 @@ function multiplayerDetailChipsHtml(it) {
     it.coop ? '<span class="mode-chip mode-chip-sub">협동</span>' : '',
     it.pvp ? '<span class="mode-chip mode-chip-sub">대전</span>' : '',
     it.onlineMulti ? '<span class="mode-chip mode-chip-sub">온라인</span>' : '',
-    it.localMulti ? '<span class="mode-chip mode-chip-sub">로컬/한 화면</span>' : ''
+    it.localMulti ? '<span class="mode-chip mode-chip-sub">로컬/한 화면</span>' : '',
+    it.crossPlatform ? '<span class="mode-chip mode-chip-sub">크로스플랫폼</span>' : ''
   ].join('');
 }
 
@@ -288,8 +235,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 function render() {
-  const config = getModeConfig(currentMode);
-  const minDiscount = config.showMinDiscount ? parseInt(minDiscountEl.value, 10) : 0;
+  const minDiscount = parseInt(minDiscountEl.value, 10);
   const sortMode = sortEl.value;
   const genre = genreEl.value;
   const playMode = playModeEl.value;
@@ -297,13 +243,14 @@ function render() {
 
   let items = allItems.filter((it) => {
     if (it.discount < minDiscount) return false;
-    if (genre && !(it.genres || []).includes(genre)) return false;
+    if (genre && !(it.genres || []).includes(genre) && !(it.tags || []).includes(genre)) return false;
     if (playMode === 'single' && !(it.singleplayer && !it.multiplayer)) return false;
     if (playMode === 'multi' && !it.multiplayer) return false;
     if (playMode === 'coop' && !it.coop) return false;
     if (playMode === 'pvp' && !it.pvp) return false;
     if (playMode === 'online' && !it.onlineMulti) return false;
     if (playMode === 'local' && !it.localMulti) return false;
+    if (playMode === 'crossPlatform' && !it.crossPlatform) return false;
     if (hideNegative && /부정/.test(it.reviewText || '')) return false;
     return true;
   });
@@ -319,7 +266,7 @@ function render() {
   });
 
   grid.innerHTML = '';
-  emptyEl.textContent = config.emptyMessage;
+  emptyEl.textContent = EMPTY_MESSAGE;
   emptyEl.style.display = items.length ? 'none' : 'block';
 
   for (const it of items) {
@@ -387,40 +334,28 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function applyModeChrome(mode) {
-  const config = getModeConfig(mode);
-  pageTitleEl.textContent = config.title;
-  pageSubtitleEl.textContent = config.subtitle;
-  tabDealsEl.classList.toggle('active', mode === 'deals');
-  themeSelectWrapEl.classList.toggle('active', mode.startsWith('theme:'));
-  minDiscountFieldEl.style.display = config.showMinDiscount ? '' : 'none';
-  minDiscountEl.value = 0;
-  minDiscountValEl.textContent = '0%';
-  populateSortOptions(mode);
-}
-
-async function loadMode(mode, { force = false, silent = false } = {}) {
+async function loadDeals({ force = false, silent = false } = {}) {
   const accessCode = getStoredAccessCode();
   if (!accessCode) {
     showAccessGate('이 사이트는 초대받은 사람만 볼 수 있어요. 받은 접근 코드를 입력해주세요.');
     return;
   }
 
-  if (!force && modeData[mode]) {
-    applyLoadedData(mode);
+  if (!force && loadedData) {
+    applyLoadedData();
     return;
   }
 
   if (!silent) {
     refreshBtn.disabled = true;
     refreshBtn.classList.add('spinning');
-    if (!modeData[mode]) {
+    if (!loadedData) {
       statusEl.textContent = '불러오는 중...';
       renderSkeleton(12);
     }
   }
   try {
-    const res = await fetch(`${getModeConfig(mode).endpoint}?count=150`, {
+    const res = await fetch('/api/deals?count=150', {
       headers: { 'X-Access-Code': accessCode }
     });
 
@@ -437,8 +372,8 @@ async function loadMode(mode, { force = false, silent = false } = {}) {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     hideAccessGate();
-    modeData[mode] = data;
-    applyLoadedData(mode);
+    loadedData = data;
+    applyLoadedData();
   } catch (e) {
     if (!silent) statusEl.textContent = '불러오기 실패: ' + e.message;
   } finally {
@@ -449,21 +384,14 @@ async function loadMode(mode, { force = false, silent = false } = {}) {
   }
 }
 
-function applyLoadedData(mode) {
-  const data = modeData[mode];
-
-  // A background tab's poll must never touch the visibly-rendered state —
-  // only redraw when this is the tab the user is actually looking at.
-  if (mode === currentMode) {
-    allItems = data.items;
-    itadEnabled = data.itadEnabled;
-    fetchedAtEl.textContent = '마지막 갱신 ' + new Date(data.fetchedAt).toLocaleString('ko-KR');
-    populateGenreOptions();
-    render();
-    appendEnrichmentStatus(data);
-  }
-
-  maybeSchedulePoll(mode, data);
+function applyLoadedData() {
+  allItems = loadedData.items;
+  itadEnabled = loadedData.itadEnabled;
+  fetchedAtEl.textContent = '마지막 갱신 ' + new Date(loadedData.fetchedAt).toLocaleString('ko-KR');
+  populateGenreOptions();
+  render();
+  appendEnrichmentStatus(loadedData);
+  maybeSchedulePoll(loadedData);
 }
 
 function appendEnrichmentStatus(data) {
@@ -472,70 +400,32 @@ function appendEnrichmentStatus(data) {
   statusEl.textContent += ` · 상세 정보 채우는 중... (${remaining}개 남음)`;
 }
 
-function maybeSchedulePoll(mode, data) {
-  const state = getPollState(mode);
-  clearTimeout(state.timer);
-  state.timer = null;
+function maybeSchedulePoll(data) {
+  clearTimeout(pollState.timer);
+  pollState.timer = null;
 
-  if (data.enriched || state.attempts >= POLL_MAX_ATTEMPTS) {
-    state.attempts = 0;
+  if (data.enriched || pollState.attempts >= POLL_MAX_ATTEMPTS) {
+    pollState.attempts = 0;
     return;
   }
 
-  state.attempts += 1;
-  state.timer = setTimeout(() => {
-    loadMode(mode, { force: true, silent: true });
+  pollState.attempts += 1;
+  pollState.timer = setTimeout(() => {
+    loadDeals({ force: true, silent: true });
   }, POLL_INTERVAL_MS);
-}
-
-function switchMode(mode) {
-  if (mode === currentMode && modeData[mode]) {
-    // Coming back to a tab whose data was still filling in — make sure
-    // polling is (still) running rather than waiting for the next natural trigger.
-    if (modeData[mode] && !modeData[mode].enriched) maybeSchedulePoll(mode, modeData[mode]);
-    return;
-  }
-  currentMode = mode;
-  applyModeChrome(mode);
-  loadMode(mode);
 }
 
 function submitAccessCode() {
   const value = accessCodeInputEl.value.trim();
   if (!value) return;
   localStorage.setItem(ACCESS_CODE_KEY, value);
-  loadMode(currentMode);
+  loadDeals();
 }
 
 accessCodeSubmitEl.addEventListener('click', submitAccessCode);
 accessCodeInputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitAccessCode();
 });
-
-tabDealsEl.addEventListener('click', () => {
-  themeSelectEl.value = '';
-  switchMode('deals');
-});
-themeSelectEl.addEventListener('change', () => {
-  const tagId = themeSelectEl.value;
-  if (!tagId) return;
-  switchMode(`theme:${tagId}`);
-});
-
-async function loadThemes() {
-  try {
-    const res = await fetch('/api/themes');
-    const data = await res.json();
-    THEMES = data.themes || [];
-    const current = themeSelectEl.value;
-    themeSelectEl.innerHTML =
-      '<option value="">테마별 게임</option>' +
-      THEMES.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join('');
-    themeSelectEl.value = THEMES.some((t) => String(t.id) === current) ? current : '';
-  } catch (e) {
-    // Theme dropdown stays as the placeholder-only option; deals tab still works.
-  }
-}
 
 sortEl.addEventListener('change', render);
 genreEl.addEventListener('change', render);
@@ -545,8 +435,6 @@ minDiscountEl.addEventListener('input', () => {
   minDiscountValEl.textContent = minDiscountEl.value + '%';
   render();
 });
-refreshBtn.addEventListener('click', () => loadMode(currentMode, { force: true }));
+refreshBtn.addEventListener('click', () => loadDeals({ force: true }));
 
-applyModeChrome(currentMode);
-loadMode(currentMode);
-loadThemes();
+loadDeals();

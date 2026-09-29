@@ -128,73 +128,6 @@
     text-align: right;
   }
 
-  .mode-tabs {
-    display: flex;
-    gap: 4px;
-    padding: 0 28px;
-  }
-  .mode-tab {
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--fog);
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    padding: 10px 14px;
-    cursor: pointer;
-  }
-  .mode-tab:hover { color: var(--paper); }
-  .mode-tab.active {
-    color: var(--paper);
-    border-bottom-color: var(--accent);
-  }
-
-  .theme-select-wrap {
-    position: relative;
-    display: flex;
-    align-items: center;
-    border-bottom: 2px solid transparent;
-    color: var(--fog);
-    transition: color 0.15s ease, border-color 0.15s ease;
-  }
-  .theme-select-wrap:hover { color: var(--paper); }
-  .theme-select-wrap.active {
-    color: var(--paper);
-    border-bottom-color: var(--accent);
-  }
-  .theme-select {
-    appearance: none;
-    -webkit-appearance: none;
-    -moz-appearance: none;
-    background: none;
-    border: none;
-    color: inherit;
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    padding: 10px 24px 10px 14px;
-    border-radius: 0;
-    cursor: pointer;
-  }
-  .theme-select-wrap::after {
-    content: '';
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    width: 8px;
-    height: 8px;
-    pointer-events: none;
-    background: currentColor;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23000' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23000' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-    transform: translateY(-50%);
-  }
-
   .toolbar {
     position: sticky;
     top: 0;
@@ -704,21 +637,18 @@
   <span id="fetchedAt"></span>
 </header>
 
-<div class="mode-tabs">
-  <button class="mode-tab active" id="tabDeals" data-mode="deals">할인 목록</button>
-  <div class="theme-select-wrap" id="themeSelectWrap">
-    <select class="theme-select" id="themeSelect">
-      <option value="" selected>테마별 게임</option>
-    </select>
-  </div>
-</div>
-
 <div class="toolbar">
   <div class="field">
     <span class="field-label">정렬</span>
-    <select id="sort"></select>
+    <select id="sort">
+      <option value="discount_desc">할인율 높은순</option>
+      <option value="discount_asc">할인율 낮은순</option>
+      <option value="price_asc">가격 낮은순</option>
+      <option value="price_desc">가격 높은순</option>
+      <option value="name">이름순</option>
+    </select>
   </div>
-  <div class="field" id="minDiscountField">
+  <div class="field">
     <span class="field-label">최소 할인율</span>
     <div class="field-row">
       <input type="range" id="minDiscount" min="0" max="90" step="5" value="0">
@@ -726,7 +656,7 @@
     </div>
   </div>
   <div class="field">
-    <span class="field-label">장르</span>
+    <span class="field-label">장르/테마</span>
     <select id="genre">
       <option value="">전체</option>
     </select>
@@ -741,6 +671,7 @@
       <option value="pvp">└ 대전 (PvP)</option>
       <option value="online">└ 온라인</option>
       <option value="local">└ 로컬/한 화면</option>
+      <option value="crossPlatform">└ 크로스플랫폼</option>
     </select>
   </div>
   <div class="field">

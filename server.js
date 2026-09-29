@@ -59,12 +59,14 @@ function isRateLimited(ip) {
   return timestamps.length > RATE_LIMIT_MAX;
 }
 
-const inFlightByMode = {};
+let inFlightRequest = null;
 
 // Steam ids verified against its own tag reference
 // (store.steampowered.com/tagdata/populartags/koreana) — never guessed.
-// Deliberately themes that AREN'T official Steam genres (those are already
-// covered by the client-side genre filter), so this adds real new coverage.
+// Deliberately tags that ISN'T an official Steam genre (those come from
+// appdetails' own genre list on each item) — every deal gets labeled with
+// whichever of these it carries, and the frontend filter treats genres and
+// these tags as one combined list instead of two separate pickers.
 const THEME_TAGS = [
   { id: 1667, label: '공포' },
   { id: 1716, label: '로그라이크' },
@@ -75,19 +77,7 @@ const THEME_TAGS = [
   { id: 3799, label: '비주얼 노벨' },
   { id: 1659, label: '좀비' }
 ];
-const THEME_TAG_IDS = new Set(THEME_TAGS.map((t) => t.id));
-
-function resolveListConfig(mode) {
-  if (mode === 'deals') {
-    return { queryParams: 'specials=1', requireDiscount: true, requireTagId: null };
-  }
-  if (mode.startsWith('theme:')) {
-    const tagId = parseInt(mode.slice('theme:'.length), 10);
-    if (!THEME_TAG_IDS.has(tagId)) return null;
-    return { queryParams: `tags=${tagId}`, requireDiscount: false, requireTagId: tagId };
-  }
-  return null;
-}
+const THEME_TAG_LABEL_BY_ID = new Map(THEME_TAGS.map((t) => [t.id, t.label]));
 
 async function mapWithConcurrency(items, limit, fn) {
   const results = new Array(items.length);
@@ -134,7 +124,7 @@ function fetchSteamHtml(count, start, queryParams) {
   });
 }
 
-function parseResults(html, { requireDiscount = true, requireTagId = null } = {}) {
+function parseResults(html, { requireDiscount = true } = {}) {
   const blocks = html.split('<a href="https://store.steampowered.com/app/').slice(1);
   const items = [];
   for (const block of blocks) {
@@ -153,20 +143,19 @@ function parseResults(html, { requireDiscount = true, requireTagId = null } = {}
     const discount = discountMatch ? parseInt(discountMatch[1], 10) : 0;
     if (requireDiscount && (!origMatch || discount <= 0)) continue;
 
-    // Steam's tag-based search matches ANY of a game's tags, including ones
-    // buried far down its full tag list. Restricting to a game's own
-    // top-shown tags (the ones in this same search result) keeps a themed
-    // list (e.g. Horror) to games where that's actually a defining tag,
-    // not an incidental one.
-    if (requireTagId !== null) {
-      let tagIds = [];
-      try {
-        tagIds = tagIdsMatch ? JSON.parse(tagIdsMatch[1]) : [];
-      } catch (e) {
-        tagIds = [];
-      }
-      if (!tagIds.includes(requireTagId)) continue;
+    // A game's full tag list can bury an incidental tag deep down (e.g.
+    // Cyberpunk somewhere having "Horror" at position #15), so only its own
+    // top-shown tags count toward these labels.
+    let tagIds = [];
+    try {
+      tagIds = tagIdsMatch ? JSON.parse(tagIdsMatch[1]) : [];
+    } catch (e) {
+      tagIds = [];
     }
+    const tags = tagIds
+      .slice(0, 7)
+      .filter((id) => THEME_TAG_LABEL_BY_ID.has(id))
+      .map((id) => THEME_TAG_LABEL_BY_ID.get(id));
 
     items.push({
       appid: appidMatch[1],
@@ -180,6 +169,7 @@ function parseResults(html, { requireDiscount = true, requireTagId = null } = {}
       released: releasedMatch ? decodeEntities(releasedMatch[1]) : '',
       reviewClass: reviewMatch ? reviewMatch[1].trim() : '',
       reviewText: reviewMatch ? decodeEntities(reviewMatch[2].split('&lt;br&gt;')[0]) : '',
+      tags,
       url: `https://store.steampowered.com/app/${appidMatch[1]}/`
     });
   }
@@ -198,10 +188,10 @@ function applyAppDetailsFromCache(items) {
   const pending = [];
   for (const item of items) {
     const d = appdetailsCache[item.appid];
-    // d.coop is undefined for entries cached before the coop/pvp/online/local
-    // breakdown was added — treat those as stale too so they refetch instead
-    // of showing blank multiplayer-detail chips for up to 30 days.
-    const fresh = d && now - d.cachedAt <= APPDETAILS_TTL_MS && d.coop !== undefined;
+    // d.crossPlatform is undefined for entries cached before that field was
+    // added — treat those as stale too so they refetch instead of showing a
+    // blank crossPlatform chip for up to 30 days.
+    const fresh = d && now - d.cachedAt <= APPDETAILS_TTL_MS && d.crossPlatform !== undefined;
     item.genres = (d && d.genres) || [];
     item.shortDescription = (d && d.shortDescription) || '';
     item.multiplayer = !!(d && d.multiplayer);
@@ -210,6 +200,7 @@ function applyAppDetailsFromCache(items) {
     item.pvp = !!(d && d.pvp);
     item.onlineMulti = !!(d && d.onlineMulti);
     item.localMulti = !!(d && d.localMulti);
+    item.crossPlatform = !!(d && d.crossPlatform);
     item.metacritic = (d && d.metacritic) || null;
     if (!fresh) pending.push(item);
   }
@@ -333,31 +324,26 @@ function writeRecordTracking(items) {
   cache.saveJson('record-history.json', record);
 }
 
-async function fetchBaseList(count, mode) {
-  const { queryParams, requireDiscount, requireTagId } = resolveListConfig(mode);
-  // A quality filter (like requireTagId) can reject a large share of each raw
-  // page, so keep pulling further pages from Steam until we have enough
-  // qualifying items — up to a safety cap so a narrow filter can't spin
-  // forever if Steam's supply of matches runs out.
+async function fetchBaseList(count) {
   const MAX_RAW_PAGES = 10;
   let all = [];
   let start = 0;
   for (let page = 0; page < MAX_RAW_PAGES && all.length < count; page++) {
     let data;
     try {
-      data = await fetchSteamHtml(100, start, queryParams);
+      data = await fetchSteamHtml(100, start, 'specials=1');
     } catch (e) {
       await new Promise((r) => setTimeout(r, 800));
-      data = await fetchSteamHtml(100, start, queryParams);
+      data = await fetchSteamHtml(100, start, 'specials=1');
     }
     if (!data.results_html || !data.results_html.includes('search_result_row')) break;
-    all = all.concat(parseResults(data.results_html, { requireDiscount, requireTagId }));
+    all = all.concat(parseResults(data.results_html, { requireDiscount: true }));
     start += 100;
   }
   all = all.slice(0, count);
 
   if (all.length === 0) {
-    console.warn(`[${new Date().toISOString()}] WARNING: /${mode} returned 0 items — Steam markup may have changed, or the request may be blocked/rate-limited.`);
+    console.warn(`[${new Date().toISOString()}] WARNING: /api/deals returned 0 items — Steam markup may have changed, or the request may be blocked/rate-limited.`);
   }
   return all;
 }
@@ -365,31 +351,31 @@ async function fetchBaseList(count, mode) {
 // Reusing the same live scrape across requests within this window is what
 // makes rapid enrichment polling cheap — a poll doesn't need to hit Steam
 // again, just re-read our own on-disk caches.
-const baseListCache = {};
+const baseListCache = { items: null, fetchedAt: 0 };
 
-async function getBaseList(count, mode) {
-  const cached = baseListCache[mode];
-  if (cached && Date.now() - cached.fetchedAt < BASE_LIST_FRESH_MS && cached.items.length >= count) {
-    return cached.items.slice(0, count).map((i) => ({ ...i }));
+async function getBaseList(count) {
+  if (baseListCache.items && Date.now() - baseListCache.fetchedAt < BASE_LIST_FRESH_MS && baseListCache.items.length >= count) {
+    return baseListCache.items.slice(0, count).map((i) => ({ ...i }));
   }
-  if (!inFlightByMode[mode]) {
-    inFlightByMode[mode] = fetchBaseList(count, mode).finally(() => {
-      inFlightByMode[mode] = null;
+  if (!inFlightRequest) {
+    inFlightRequest = fetchBaseList(count).finally(() => {
+      inFlightRequest = null;
     });
   }
-  const items = await inFlightByMode[mode];
-  baseListCache[mode] = { items, fetchedAt: Date.now() };
+  const items = await inFlightRequest;
+  baseListCache.items = items;
+  baseListCache.fetchedAt = Date.now();
   return items.map((i) => ({ ...i }));
 }
 
-const backgroundJobs = {};
+let backgroundJob = null;
 
 // Fire-and-forget: fetches whatever appdetails/ITAD data was missing, then
 // persists history/record-tracking once that's done. Never awaited by the
 // request handler — the next poll just re-reads the caches this updates.
-function runBackgroundEnrichment(mode, items, pendingDetails, pendingItad, apiKey) {
-  if (backgroundJobs[mode]) return;
-  backgroundJobs[mode] = Promise.resolve()
+function runBackgroundEnrichment(items, pendingDetails, pendingItad, apiKey) {
+  if (backgroundJob) return;
+  backgroundJob = Promise.resolve()
     .then(async () => {
       await fetchMissingAppDetails(pendingDetails);
       await fetchMissingItad(pendingItad, apiKey);
@@ -399,16 +385,16 @@ function runBackgroundEnrichment(mode, items, pendingDetails, pendingItad, apiKe
       writeRecordTracking(items);
     })
     .catch((e) => {
-      console.warn(`[${new Date().toISOString()}] Background enrichment for /${mode} failed: ${e.message}`);
+      console.warn(`[${new Date().toISOString()}] Background enrichment failed: ${e.message}`);
     })
     .finally(() => {
-      backgroundJobs[mode] = null;
+      backgroundJob = null;
     });
 }
 
-async function buildResponse(count, mode) {
+async function buildResponse(count) {
   const config = loadConfig();
-  const items = await getBaseList(count, mode);
+  const items = await getBaseList(count);
 
   applyHistoryFromCache(items);
   const pendingDetails = applyAppDetailsFromCache(items);
@@ -418,7 +404,7 @@ async function buildResponse(count, mode) {
   const pendingAppids = new Set([...pendingDetails, ...pendingItad].map((i) => i.appid));
   const enriched = pendingAppids.size === 0;
   if (!enriched) {
-    runBackgroundEnrichment(mode, items, pendingDetails, pendingItad, config.itadApiKey);
+    runBackgroundEnrichment(items, pendingDetails, pendingItad, config.itadApiKey);
   }
 
   return {
@@ -434,21 +420,7 @@ const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, `http://localhost:${PORT}`);
   const ip = req.socket.remoteAddress || 'unknown';
 
-  if (reqUrl.pathname === '/api/themes') {
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ themes: THEME_TAGS }));
-    return;
-  }
-
-  let mode = null;
   if (reqUrl.pathname === '/api/deals') {
-    mode = 'deals';
-  } else if (reqUrl.pathname === '/api/theme') {
-    const tagId = parseInt(reqUrl.searchParams.get('tag') || '', 10);
-    if (THEME_TAG_IDS.has(tagId)) mode = `theme:${tagId}`;
-  }
-
-  if (mode) {
     const config = loadConfig();
     const code = req.headers['x-access-code'] || reqUrl.searchParams.get('code') || '';
     if (code !== config.siteAccessCode) {
@@ -464,7 +436,7 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const count = Math.min(parseInt(reqUrl.searchParams.get('count') || '150', 10), 300);
-      const payload = await buildResponse(count, mode);
+      const payload = await buildResponse(count);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(payload));
     } catch (e) {

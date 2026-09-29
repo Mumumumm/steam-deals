@@ -13,6 +13,10 @@ const COOP_CATEGORY_IDS = new Set([9, 38, 39, 48]);
 const PVP_CATEGORY_IDS = new Set([49, 36, 37, 47]);
 const ONLINE_CATEGORY_IDS = new Set([20, 27, 36, 38]);
 const LOCAL_CATEGORY_IDS = new Set([24, 37, 39]);
+// Separate from ONLINE_CATEGORY_IDS (which id 27 also counts toward) because
+// this answers a specific question — can a PC player and a console player
+// play together — that "online" alone doesn't.
+const CROSS_PLATFORM_CATEGORY_ID = 27;
 
 function decodeEntities(str) {
   return (str || '')
@@ -58,6 +62,7 @@ function fetchAppDetails(appid) {
               pvp: categoryIds.some((id) => PVP_CATEGORY_IDS.has(id)),
               onlineMulti: categoryIds.some((id) => ONLINE_CATEGORY_IDS.has(id)),
               localMulti: categoryIds.some((id) => LOCAL_CATEGORY_IDS.has(id)),
+              crossPlatform: categoryIds.includes(CROSS_PLATFORM_CATEGORY_ID),
               metacritic: data.metacritic ? { score: data.metacritic.score, url: data.metacritic.url } : null
             });
           } catch (e) {
