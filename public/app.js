@@ -263,7 +263,16 @@ function render() {
   });
 
   grid.innerHTML = '';
-  emptyEl.textContent = EMPTY_MESSAGE;
+  // playMode depends on singleplayer/multiplayer/coop/pvp/etc, which come from
+  // background appdetails enrichment, not the initial scrape — right after a
+  // fresh fetch (or right after a redeploy wipes the cache) most items haven't
+  // been enriched yet, so a playMode filter can legitimately match almost
+  // nothing for a while. The default empty message blames the discount
+  // slider, which is wrong here and actively misleading.
+  const stillEnriching = loadedData && !loadedData.enriched;
+  emptyEl.textContent = stillEnriching && playMode
+    ? '아직 상세 정보를 불러오는 중이에요. 잠시 후 다시 확인해주세요.'
+    : EMPTY_MESSAGE;
   emptyEl.style.display = items.length ? 'none' : 'block';
 
   for (const it of items) {
