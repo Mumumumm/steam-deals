@@ -1,0 +1,16 @@
+name: Keep Render instance awake
+
+on:
+  schedule:
+    # Every 10 minutes — comfortably under Render's 15-minute idle spin-down
+    # window. Hits the static page only (no API call), so this never
+    # triggers a Steam/ITAD fetch — it just keeps the Node process warm.
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping site
+        run: curl -sS -o /dev/null -w "HTTP %{http_code}\n" https://steam-deals-tu2x.onrender.com/

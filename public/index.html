@@ -6,39 +6,62 @@
 <title>STEAM DEALS — 할인 스캐너</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
+  /*
+    Palette sourced directly from store.steampowered.com's computed styles:
+    page bg #1b2838, header #171d25, body text #c6d4df, secondary text #8f98a0,
+    review-positive blue #66c0f4, review-mixed tan #b9a074, discount badge
+    #4c6b22 bg / #beee11 text. Everything else (mid/high discount tiers, the
+    "record" gold, review-negative red) is built to sit in that same family.
+  */
   :root {
-    --ink: #10131a;
-    --surface: #1a1f2b;
-    --surface-hover: #222a3c;
-    --paper: #e9ecf2;
-    --fog: #8b93a6;
-    --border: rgba(255,255,255,0.07);
-    --accent: #4fc3d9;
-    --accent-ink: #052026;
-    --amber: #f2a641;
-    --heat: #ef5350;
-    --good: #6cc06c;
-    --shadow: 0 8px 24px rgba(0,0,0,0.35);
-    --font-display: 'Bricolage Grotesque', 'Segoe UI', sans-serif;
-    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif;
+    --ink: #1b2838;
+    --surface: #16202c;
+    --card: #202f42;
+    --card-hover: #2a3f57;
+    --paper: #c6d4df;
+    --fog: #8f98a0;
+    --border: rgba(255,255,255,0.06);
+    --accent: #66c0f4;
+    --accent-ink: #06212e;
+    --tier-low-bg: #4c6b22;
+    --tier-low-text: #beee11;
+    --tier-mid-bg: #6b5014;
+    --tier-mid-text: #f2b705;
+    --tier-high-bg: #6b2020;
+    --tier-high-text: #ff6b57;
+    --good: #66c0f4;
+    --mixed: #b9a074;
+    --bad: #b0503f;
+    --gold: #e4c14d;
+    --shadow: 0 10px 26px rgba(0,0,0,0.45);
+    --font-display: 'Noto Sans KR', -apple-system, 'Malgun Gothic', sans-serif;
+    --font-body: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif;
   }
 
   @media (prefers-color-scheme: light) {
     :root {
-      --ink: #eef1f6;
+      --ink: #eef2f5;
       --surface: #ffffff;
-      --surface-hover: #f3f6fa;
-      --paper: #171b26;
-      --fog: #5c6478;
-      --border: rgba(15,23,42,0.08);
-      --accent: #0d7f9b;
+      --card: #ffffff;
+      --card-hover: #eef6fc;
+      --paper: #1b2838;
+      --fog: #5c6b78;
+      --border: rgba(27,40,56,0.12);
+      --accent: #0f7dbf;
       --accent-ink: #ffffff;
-      --amber: #b5720a;
-      --heat: #d1403c;
-      --good: #2e8b3d;
-      --shadow: 0 8px 20px rgba(30,41,59,0.12);
+      --tier-low-bg: #dcedc2;
+      --tier-low-text: #3f5c17;
+      --tier-mid-bg: #fbe6b8;
+      --tier-mid-text: #7a5405;
+      --tier-high-bg: #f6cfc9;
+      --tier-high-text: #8a2c1f;
+      --good: #0f7dbf;
+      --mixed: #8a6d34;
+      --bad: #a1382c;
+      --gold: #9c7a10;
+      --shadow: 0 10px 24px rgba(27,40,56,0.14);
     }
   }
 
@@ -84,8 +107,8 @@
 
   .titles h1 {
     font-family: var(--font-display);
-    font-size: 21px;
-    font-weight: 800;
+    font-size: 22px;
+    font-weight: 900;
     letter-spacing: 0.01em;
     margin: 0;
     text-wrap: balance;
@@ -118,6 +141,8 @@
     font-family: var(--font-body);
     font-size: 13px;
     font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
     padding: 10px 14px;
     cursor: pointer;
   }
@@ -163,10 +188,10 @@
   }
 
   select {
-    background: var(--surface);
+    background: var(--card);
     color: var(--paper);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 2px;
     padding: 6px 10px;
     font-size: 13px;
     font-family: var(--font-body);
@@ -222,10 +247,12 @@
     background: var(--accent);
     color: var(--accent-ink);
     border: none;
-    border-radius: 6px;
+    border-radius: 2px;
     padding: 8px 16px;
     font-size: 13px;
     font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -256,9 +283,9 @@
 
   .card {
     position: relative;
-    background: var(--surface);
+    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 2px;
     overflow: hidden;
     text-decoration: none;
     color: var(--paper);
@@ -267,7 +294,7 @@
     transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
   }
   .card:hover {
-    background: var(--surface-hover);
+    background: var(--card-hover);
     transform: translateY(-3px);
     box-shadow: var(--shadow);
   }
@@ -289,36 +316,33 @@
 
   .tag {
     position: absolute;
-    top: 10px;
-    left: -6px;
+    top: 0;
+    left: 0;
     font-family: var(--font-display);
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.01em;
-    color: #0a0a0a;
-    padding: 4px 12px 4px 14px;
-    clip-path: polygon(0 50%, 10px 0, 100% 0, 100% 100%, 10px 100%);
-    box-shadow: 0 3px 8px rgba(0,0,0,0.35);
+    padding: 4px 9px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
   }
-  .tag.tier-low { background: var(--accent); color: var(--accent-ink); }
-  .tag.tier-mid { background: var(--amber); color: #241300; }
-  .tag.tier-high { background: var(--heat); color: #2b0000; }
+  .tag.tier-low { background: var(--tier-low-bg); color: var(--tier-low-text); }
+  .tag.tier-mid { background: var(--tier-mid-bg); color: var(--tier-mid-text); }
+  .tag.tier-high { background: var(--tier-high-bg); color: var(--tier-high-text); }
 
   .record-badge {
     position: absolute;
-    top: 42px;
-    left: 8px;
+    top: 27px;
+    left: 0;
     display: flex;
     align-items: center;
     gap: 3px;
-    background: #ffd54a;
+    background: var(--gold);
     color: #241a00;
     font-size: 10.5px;
     font-weight: 800;
     letter-spacing: 0.01em;
-    padding: 3px 8px 3px 6px;
-    border-radius: 4px;
-    box-shadow: 0 3px 8px rgba(0,0,0,0.35);
+    padding: 3px 8px 3px 7px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
   }
   .record-badge svg { width: 10px; height: 10px; flex: none; }
 
@@ -359,7 +383,7 @@
     letter-spacing: 0.02em;
     color: var(--fog);
     background: color-mix(in srgb, var(--fog) 14%, transparent);
-    border-radius: 4px;
+    border-radius: 2px;
     padding: 2px 6px;
   }
 
@@ -387,7 +411,7 @@
     gap: 3px;
     font-weight: 600;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: 2px;
     background: color-mix(in srgb, var(--accent) 16%, transparent);
     color: var(--accent);
   }
@@ -395,7 +419,7 @@
   .review-chip {
     font-weight: 700;
     padding: 2px 7px;
-    border-radius: 4px;
+    border-radius: 2px;
     color: var(--rc);
     background: color-mix(in srgb, var(--rc) 18%, transparent);
   }
@@ -403,21 +427,21 @@
   .review-chip.rp3 { --rc: color-mix(in srgb, var(--good) 85%, var(--fog)); }
   .review-chip.rp2 { --rc: color-mix(in srgb, var(--good) 65%, var(--fog)); }
   .review-chip.rp1 { --rc: color-mix(in srgb, var(--good) 45%, var(--fog)); }
-  .review-chip.rn0 { --rc: var(--fog); }
-  .review-chip.rn1 { --rc: color-mix(in srgb, var(--heat) 45%, var(--fog)); }
-  .review-chip.rn2 { --rc: color-mix(in srgb, var(--heat) 65%, var(--fog)); }
-  .review-chip.rn3 { --rc: color-mix(in srgb, var(--heat) 85%, var(--fog)); }
-  .review-chip.rn4 { --rc: var(--heat); }
+  .review-chip.rn0 { --rc: var(--mixed); }
+  .review-chip.rn1 { --rc: color-mix(in srgb, var(--bad) 45%, var(--fog)); }
+  .review-chip.rn2 { --rc: color-mix(in srgb, var(--bad) 65%, var(--fog)); }
+  .review-chip.rn3 { --rc: color-mix(in srgb, var(--bad) 85%, var(--fog)); }
+  .review-chip.rn4 { --rc: var(--bad); }
   .metacritic-chip {
     font-weight: 800;
     font-size: 11px;
     padding: 1px 6px;
-    border-radius: 4px;
+    border-radius: 2px;
     color: white;
   }
-  .metacritic-chip.mc-high { background: #6c3; }
-  .metacritic-chip.mc-mid { background: #fc3; color: #241300; }
-  .metacritic-chip.mc-low { background: #f00; }
+  .metacritic-chip.mc-high { background: #4c6b22; color: var(--tier-low-text); }
+  .metacritic-chip.mc-mid { background: var(--tier-mid-bg); color: var(--tier-mid-text); }
+  .metacritic-chip.mc-low { background: var(--tier-high-bg); color: var(--tier-high-text); }
 
   .history-row {
     display: flex;
@@ -429,7 +453,7 @@
     padding-top: 6px;
     margin-top: 2px;
   }
-  .delta-up { color: var(--heat); font-weight: 700; }
+  .delta-up { color: var(--bad); font-weight: 700; }
   .delta-down { color: var(--accent); font-weight: 700; }
 
   .price-row {
@@ -464,9 +488,9 @@
     max-width: 420px;
     margin: 60px auto;
     padding: 28px;
-    background: var(--surface);
+    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 2px;
     text-align: center;
   }
   #accessGate p {
@@ -479,7 +503,7 @@
     background: var(--ink);
     color: var(--paper);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 2px;
     padding: 8px 10px;
     font-size: 13px;
     width: 180px;
@@ -488,7 +512,7 @@
     background: var(--accent);
     color: var(--accent-ink);
     border: none;
-    border-radius: 6px;
+    border-radius: 2px;
     padding: 8px 16px;
     font-weight: 700;
     font-size: 13px;
@@ -496,13 +520,13 @@
   }
 
   .skeleton-card {
-    background: var(--surface);
+    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 2px;
     overflow: hidden;
   }
-  .skeleton-card .sk-media { aspect-ratio: 231/87; background: var(--surface-hover); }
-  .skeleton-card .sk-line { height: 10px; margin: 12px 14px; border-radius: 4px; background: var(--surface-hover); }
+  .skeleton-card .sk-media { aspect-ratio: 231/87; background: var(--card-hover); }
+  .skeleton-card .sk-line { height: 10px; margin: 12px 14px; border-radius: 2px; background: var(--card-hover); }
   .skeleton-card, .skeleton-card * { animation: pulse 1.4s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   @media (prefers-reduced-motion: reduce) {
@@ -527,9 +551,9 @@
   @keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
 
   .modal-card {
-    background: var(--surface);
+    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 3px;
     width: 100%;
     max-width: 560px;
     max-height: 88vh;
@@ -603,9 +627,11 @@
     background: var(--accent);
     color: var(--accent-ink);
     padding: 9px 18px;
-    border-radius: 6px;
+    border-radius: 2px;
     font-weight: 700;
     font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
     text-decoration: none;
     display: inline-flex;
     align-items: center;

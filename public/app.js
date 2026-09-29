@@ -35,6 +35,14 @@ const modeData = { deals: null, horror: null };
 let allItems = [];
 let itadEnabled = false;
 
+// The server returns the base list immediately and fills in genres/reviews/
+// history in the background. While a mode's data isn't fully enriched yet,
+// we poll the same endpoint every few seconds (cheap — it just re-reads the
+// server's own cache) and re-render as new fields arrive.
+const POLL_INTERVAL_MS = 4000;
+const POLL_MAX_ATTEMPTS = 45; // ~3 minutes worst case
+const pollState = { deals: { timer: null, attempts: 0 }, horror: { timer: null, attempts: 0 } };
+
 const grid = document.getElementById('grid');
 const statusEl = document.getElementById('status');
 const emptyEl = document.getElementById('empty');
@@ -356,7 +364,7 @@ function applyModeChrome(mode) {
   populateSortOptions(mode);
 }
 
-async function loadMode(mode, { force = false } = {}) {
+async function loadMode(mode, { force = false, silent = false } = {}) {
   const accessCode = getStoredAccessCode();
   if (!accessCode) {
     showAccessGate('이 사이트는 초대받은 사람만 볼 수 있어요. 받은 접근 코드를 입력해주세요.');
@@ -368,11 +376,13 @@ async function loadMode(mode, { force = false } = {}) {
     return;
   }
 
-  refreshBtn.disabled = true;
-  refreshBtn.classList.add('spinning');
-  if (!modeData[mode]) {
-    statusEl.textContent = '불러오는 중... (첫 실행 시 장르/멀티플레이/평점 정보 수집으로 다소 시간이 걸릴 수 있습니다)';
-    renderSkeleton(12);
+  if (!silent) {
+    refreshBtn.disabled = true;
+    refreshBtn.classList.add('spinning');
+    if (!modeData[mode]) {
+      statusEl.textContent = '불러오는 중...';
+      renderSkeleton(12);
+    }
   }
   try {
     const res = await fetch(`${MODE_CONFIG[mode].endpoint}?count=150`, {
@@ -385,7 +395,7 @@ async function loadMode(mode, { force = false } = {}) {
       return;
     }
     if (res.status === 429) {
-      statusEl.textContent = '요청이 너무 잦아요. 잠시 후 다시 시도해주세요.';
+      if (!silent) statusEl.textContent = '요청이 너무 잦아요. 잠시 후 다시 시도해주세요.';
       return;
     }
 
@@ -395,24 +405,61 @@ async function loadMode(mode, { force = false } = {}) {
     modeData[mode] = data;
     applyLoadedData(mode);
   } catch (e) {
-    statusEl.textContent = '불러오기 실패: ' + e.message;
+    if (!silent) statusEl.textContent = '불러오기 실패: ' + e.message;
   } finally {
-    refreshBtn.disabled = false;
-    refreshBtn.classList.remove('spinning');
+    if (!silent) {
+      refreshBtn.disabled = false;
+      refreshBtn.classList.remove('spinning');
+    }
   }
 }
 
 function applyLoadedData(mode) {
   const data = modeData[mode];
-  allItems = data.items;
-  itadEnabled = data.itadEnabled;
-  fetchedAtEl.textContent = '마지막 갱신 ' + new Date(data.fetchedAt).toLocaleString('ko-KR');
-  populateGenreOptions();
-  render();
+
+  // A background tab's poll must never touch the visibly-rendered state —
+  // only redraw when this is the tab the user is actually looking at.
+  if (mode === currentMode) {
+    allItems = data.items;
+    itadEnabled = data.itadEnabled;
+    fetchedAtEl.textContent = '마지막 갱신 ' + new Date(data.fetchedAt).toLocaleString('ko-KR');
+    populateGenreOptions();
+    render();
+    appendEnrichmentStatus(data);
+  }
+
+  maybeSchedulePoll(mode, data);
+}
+
+function appendEnrichmentStatus(data) {
+  if (data.enriched) return;
+  const remaining = data.pendingCount || 0;
+  statusEl.textContent += ` · 상세 정보 채우는 중... (${remaining}개 남음)`;
+}
+
+function maybeSchedulePoll(mode, data) {
+  const state = pollState[mode];
+  clearTimeout(state.timer);
+  state.timer = null;
+
+  if (data.enriched || state.attempts >= POLL_MAX_ATTEMPTS) {
+    state.attempts = 0;
+    return;
+  }
+
+  state.attempts += 1;
+  state.timer = setTimeout(() => {
+    loadMode(mode, { force: true, silent: true });
+  }, POLL_INTERVAL_MS);
 }
 
 function switchMode(mode) {
-  if (mode === currentMode && modeData[mode]) return;
+  if (mode === currentMode && modeData[mode]) {
+    // Coming back to a tab whose data was still filling in — make sure
+    // polling is (still) running rather than waiting for the next natural trigger.
+    if (modeData[mode] && !modeData[mode].enriched) maybeSchedulePoll(mode, modeData[mode]);
+    return;
+  }
   currentMode = mode;
   applyModeChrome(mode);
   loadMode(mode);

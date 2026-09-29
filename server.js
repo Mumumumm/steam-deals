@@ -12,7 +12,13 @@ const ITAD_COUNTRY = 'KR';
 const APPDETAILS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const ITAD_STORELOW_TTL_MS = 12 * 60 * 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
-const RATE_LIMIT_MAX = 30;
+// Raised from 30: the client now polls every few seconds while enrichment
+// fills in in the background, so one normal page load legitimately makes
+// several dozen requests. This still only guards our own server's compute —
+// polling doesn't add extra Steam/ITAD calls beyond what background
+// enrichment already needs to do once.
+const RATE_LIMIT_MAX = 150;
+const BASE_LIST_FRESH_MS = 60 * 1000;
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 
@@ -157,59 +163,80 @@ function parseResults(html, { requireDiscount = true, requireTagId = null } = {}
   return items;
 }
 
-async function enrichWithAppDetails(items) {
+// Each enrichment source is split into a synchronous "apply whatever's
+// already cached" half (fast, used on every request) and an async "go fetch
+// what's missing" half (used only by the background job below). This is
+// what lets the HTTP response return immediately even when some items have
+// never been seen before or their ITAD data has gone stale.
+
+function applyAppDetailsFromCache(items) {
+  const appdetailsCache = cache.loadJson('appdetails-cache.json', {});
+  const now = Date.now();
+  const pending = [];
+  for (const item of items) {
+    const d = appdetailsCache[item.appid];
+    const fresh = d && now - d.cachedAt <= APPDETAILS_TTL_MS;
+    item.genres = (d && d.genres) || [];
+    item.shortDescription = (d && d.shortDescription) || '';
+    item.multiplayer = !!(d && d.multiplayer);
+    item.singleplayer = !!(d && d.singleplayer);
+    item.metacritic = (d && d.metacritic) || null;
+    if (!fresh) pending.push(item);
+  }
+  return pending;
+}
+
+async function fetchMissingAppDetails(pendingItems) {
+  if (!pendingItems.length) return;
   const appdetailsCache = cache.loadJson('appdetails-cache.json', {});
   const now = Date.now();
 
-  await mapWithConcurrency(items, 5, async (item) => {
-    const cached = appdetailsCache[item.appid];
-    if (cached && now - cached.cachedAt <= APPDETAILS_TTL_MS) return;
-
+  await mapWithConcurrency(pendingItems, 5, async (item) => {
     let details = await fetchAppDetails(item.appid);
     if (!details) {
       await new Promise((r) => setTimeout(r, 400));
       details = await fetchAppDetails(item.appid);
     }
     // Only persist successful lookups; a failed/rate-limited fetch is retried
-    // on the next refresh instead of being baked in as "no data" for 30 days.
+    // on the next cycle instead of being baked in as "no data" for 30 days.
     if (details) appdetailsCache[item.appid] = { ...details, cachedAt: now };
   });
 
   cache.saveJson('appdetails-cache.json', appdetailsCache);
-
-  for (const item of items) {
-    const d = appdetailsCache[item.appid];
-    item.genres = d && d.genres ? d.genres : [];
-    item.shortDescription = d && d.shortDescription ? d.shortDescription : '';
-    item.multiplayer = !!(d && d.multiplayer);
-    item.singleplayer = !!(d && d.singleplayer);
-    item.metacritic = d && d.metacritic ? d.metacritic : null;
-  }
 }
 
-async function enrichWithItad(items, apiKey) {
-  if (!apiKey) {
-    for (const item of items) item.allTimeLowCut = null;
-    return;
+function applyItadFromCache(items) {
+  const itadCache = cache.loadJson('itad-cache.json', {});
+  const now = Date.now();
+  const pending = [];
+  for (const item of items) {
+    const e = itadCache[item.appid];
+    item.allTimeLowCut = e && e.storeLow ? e.storeLow.cut : null;
+    const fresh = e && e.itadId && now - (e.storeLowCachedAt || 0) <= ITAD_STORELOW_TTL_MS;
+    if (!fresh) pending.push(item);
   }
+  return pending;
+}
 
+async function fetchMissingItad(pendingItems, apiKey) {
+  if (!apiKey || !pendingItems.length) return;
   const itadCache = cache.loadJson('itad-cache.json', {});
   const now = Date.now();
 
-  await mapWithConcurrency(items, 3, async (item) => {
+  await mapWithConcurrency(pendingItems, 3, async (item) => {
     const entry = itadCache[item.appid];
     if (entry && entry.itadId) return;
     try {
       const itadId = await itad.lookupGameId(item.appid, apiKey);
       itadCache[item.appid] = { itadId, storeLow: null, storeLowCachedAt: 0 };
     } catch (e) {
-      // leave uncached on failure (network error / rate limit) so it retries next refresh
+      // leave uncached on failure (network error / rate limit) so it retries next cycle
     }
   });
 
-  const idsNeedingLow = Object.entries(itadCache)
-    .filter(([appid, e]) => e.itadId && (now - (e.storeLowCachedAt || 0) > ITAD_STORELOW_TTL_MS))
-    .filter(([appid]) => items.some((it) => it.appid === appid));
+  const idsNeedingLow = pendingItems
+    .map((item) => [item.appid, itadCache[item.appid]])
+    .filter(([, e]) => e && e.itadId);
 
   if (idsNeedingLow.length) {
     try {
@@ -224,16 +251,28 @@ async function enrichWithItad(items, apiKey) {
   }
 
   cache.saveJson('itad-cache.json', itadCache);
+}
 
+function applyHistoryFromCache(items) {
+  const history = cache.loadJson('history.json', {});
   for (const item of items) {
-    const entry = itadCache[item.appid];
-    item.allTimeLowCut = entry && entry.storeLow ? entry.storeLow.cut : null;
+    const prev = history[item.appid];
+    item.previousDiscount = prev ? prev.discount : null;
+    item.discountDelta = prev ? item.discount - prev.discount : null;
   }
 }
 
-function applyRecordTracking(items) {
-  const record = cache.loadJson('record-history.json', {});
+function writeHistory(items) {
+  const history = cache.loadJson('history.json', {});
+  const now = new Date().toISOString();
+  for (const item of items) {
+    history[item.appid] = { discount: item.discount, finalPrice: item.finalPrice, fetchedAt: now };
+  }
+  cache.saveJson('history.json', history);
+}
 
+function applyRecordFromCache(items) {
+  const record = cache.loadJson('record-history.json', {});
   for (const item of items) {
     const prevCut = record[item.appid];
     item.isNewAllTimeLow =
@@ -242,27 +281,16 @@ function applyRecordTracking(items) {
       prevCut !== null &&
       prevCut !== undefined &&
       item.allTimeLowCut > prevCut;
-    record[item.appid] = item.allTimeLowCut;
   }
+}
 
+function writeRecordTracking(items) {
+  const record = cache.loadJson('record-history.json', {});
+  for (const item of items) record[item.appid] = item.allTimeLowCut;
   cache.saveJson('record-history.json', record);
 }
 
-function applyHistory(items) {
-  const history = cache.loadJson('history.json', {});
-  const now = new Date().toISOString();
-
-  for (const item of items) {
-    const prev = history[item.appid];
-    item.previousDiscount = prev ? prev.discount : null;
-    item.discountDelta = prev ? item.discount - prev.discount : null;
-    history[item.appid] = { discount: item.discount, finalPrice: item.finalPrice, fetchedAt: now };
-  }
-
-  cache.saveJson('history.json', history);
-}
-
-async function buildListResponse(count, mode) {
+async function fetchBaseList(count, mode) {
   const { queryParams, requireDiscount, requireTagId } = MODE_CONFIG[mode];
   // A quality filter (like requireTagId) can reject a large share of each raw
   // page, so keep pulling further pages from Steam until we have enough
@@ -288,14 +316,75 @@ async function buildListResponse(count, mode) {
   if (all.length === 0) {
     console.warn(`[${new Date().toISOString()}] WARNING: /${mode} returned 0 items — Steam markup may have changed, or the request may be blocked/rate-limited.`);
   }
+  return all;
+}
 
+// Reusing the same live scrape across requests within this window is what
+// makes rapid enrichment polling cheap — a poll doesn't need to hit Steam
+// again, just re-read our own on-disk caches.
+const baseListCache = {};
+
+async function getBaseList(count, mode) {
+  const cached = baseListCache[mode];
+  if (cached && Date.now() - cached.fetchedAt < BASE_LIST_FRESH_MS && cached.items.length >= count) {
+    return cached.items.slice(0, count).map((i) => ({ ...i }));
+  }
+  if (!inFlightByMode[mode]) {
+    inFlightByMode[mode] = fetchBaseList(count, mode).finally(() => {
+      inFlightByMode[mode] = null;
+    });
+  }
+  const items = await inFlightByMode[mode];
+  baseListCache[mode] = { items, fetchedAt: Date.now() };
+  return items.map((i) => ({ ...i }));
+}
+
+const backgroundJobs = {};
+
+// Fire-and-forget: fetches whatever appdetails/ITAD data was missing, then
+// persists history/record-tracking once that's done. Never awaited by the
+// request handler — the next poll just re-reads the caches this updates.
+function runBackgroundEnrichment(mode, items, pendingDetails, pendingItad, apiKey) {
+  if (backgroundJobs[mode]) return;
+  backgroundJobs[mode] = Promise.resolve()
+    .then(async () => {
+      await fetchMissingAppDetails(pendingDetails);
+      await fetchMissingItad(pendingItad, apiKey);
+      applyAppDetailsFromCache(items);
+      applyItadFromCache(items);
+      writeHistory(items);
+      writeRecordTracking(items);
+    })
+    .catch((e) => {
+      console.warn(`[${new Date().toISOString()}] Background enrichment for /${mode} failed: ${e.message}`);
+    })
+    .finally(() => {
+      backgroundJobs[mode] = null;
+    });
+}
+
+async function buildResponse(count, mode) {
   const config = loadConfig();
-  applyHistory(all);
-  await enrichWithAppDetails(all);
-  await enrichWithItad(all, config.itadApiKey);
-  applyRecordTracking(all);
+  const items = await getBaseList(count, mode);
 
-  return { fetchedAt: new Date().toISOString(), itadEnabled: !!config.itadApiKey, items: all };
+  applyHistoryFromCache(items);
+  const pendingDetails = applyAppDetailsFromCache(items);
+  const pendingItad = applyItadFromCache(items);
+  applyRecordFromCache(items);
+
+  const pendingAppids = new Set([...pendingDetails, ...pendingItad].map((i) => i.appid));
+  const enriched = pendingAppids.size === 0;
+  if (!enriched) {
+    runBackgroundEnrichment(mode, items, pendingDetails, pendingItad, config.itadApiKey);
+  }
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    itadEnabled: !!config.itadApiKey,
+    enriched,
+    pendingCount: pendingAppids.size,
+    items
+  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -320,12 +409,7 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const count = Math.min(parseInt(reqUrl.searchParams.get('count') || '150', 10), 300);
-      if (!inFlightByMode[mode]) {
-        inFlightByMode[mode] = buildListResponse(count, mode).finally(() => {
-          inFlightByMode[mode] = null;
-        });
-      }
-      const payload = await inFlightByMode[mode];
+      const payload = await buildResponse(count, mode);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(payload));
     } catch (e) {
@@ -354,4 +438,11 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Steam deals server running at http://localhost:${PORT}`);
+});
+
+// Safety net for the fire-and-forget background enrichment job: it already
+// catches its own errors, but an uncaught rejection anywhere would otherwise
+// crash the whole process on newer Node versions.
+process.on('unhandledRejection', (err) => {
+  console.warn(`[${new Date().toISOString()}] Unhandled rejection: ${err && err.message}`);
 });
